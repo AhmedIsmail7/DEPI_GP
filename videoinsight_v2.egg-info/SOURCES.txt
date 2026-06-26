@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+modules/__init__.py
+modules/database.py
+modules/ingest.py
+modules/retrieval.py
+modules/transcribe.py
+modules/vision.py
+videoinsight_v2.egg-info/PKG-INFO
+videoinsight_v2.egg-info/SOURCES.txt
+videoinsight_v2.egg-info/dependency_links.txt
+videoinsight_v2.egg-info/requires.txt
+videoinsight_v2.egg-info/top_level.txt

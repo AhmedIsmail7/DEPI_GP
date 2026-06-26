@@ -1,0 +1,15 @@
+# Generated Data & Artifacts
+temp_assets/
+transcript_chunks.json
+visual_embeddings.json
+
+# Dependencies
+.venv/
+__pycache__/
+*.pyc
+
+# IDEs & OS Files
+.vscode/
+.idea/
+.DS_Store
+.env
