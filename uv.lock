@@ -302,6 +302,43 @@ wheels = [
 ]
 
 [[package]]
+name = "depi-gp"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "gdown" },
+    { name = "google-generativeai" },
+    { name = "openai-whisper" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "pydub" },
+    { name = "qdrant-client" },
+    { name = "requests" },
+    { name = "sentence-transformers" },
+    { name = "streamlit" },
+    { name = "torch" },
+    { name = "transformers" },
+    { name = "yt-dlp" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "gdown", specifier = "==5.2.0" },
+    { name = "google-generativeai", specifier = "==0.7.2" },
+    { name = "openai-whisper", specifier = "==20250625" },
+    { name = "opencv-python", specifier = "==4.10.0.84" },
+    { name = "pillow", specifier = "==10.4.0" },
+    { name = "pydub", specifier = "==0.25.1" },
+    { name = "qdrant-client", specifier = "==1.10.1" },
+    { name = "requests", specifier = "==2.32.3" },
+    { name = "sentence-transformers", specifier = "==3.0.1" },
+    { name = "streamlit", specifier = "==1.37.0" },
+    { name = "torch", specifier = "==2.4.0" },
+    { name = "transformers", specifier = "==4.44.0" },
+    { name = "yt-dlp", specifier = "==2026.6.9" },
+]
+
+[[package]]
 name = "filelock"
 version = "3.29.4"
 source = { registry = "https://pypi.org/simple" }
@@ -450,15 +487,15 @@ wheels = [
 
 [[package]]
 name = "google-auth"
-version = "2.55.0"
+version = "2.55.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "pyasn1-modules" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/81/1c/70b23fc52b2bb3c70b379f3bd05c4a60ab3a873e30c6bd21c57e0154848a/google_auth-2.55.0.tar.gz", hash = "sha256:fcd3a130f575fa36403d38774af1c64a4fbfbca09215f0589d2372b5119697cb", size = 349379, upload-time = "2026-06-15T22:33:16.466Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a3/6f/f3f4ac177c67bbee8fe8e88f2ab4f36af88c44a096e165c5217accf6e5d3/google_auth-2.55.1.tar.gz", hash = "sha256:fb2d9b730f2c9b8d326ec8d7222f21aef2ead15bf0513793d6442485d87af0a1", size = 349527, upload-time = "2026-06-25T23:39:27.182Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/44/71/c0321dc6d63d99946da45f7c06299b934e4f7f7da5c4f14d101bcb39adf1/google_auth-2.55.0-py3-none-any.whl", hash = "sha256:a17cef9dedf98c4ebae2fb0c48c8f75952c877cbc2efe09f329ef16c2783d88a", size = 252400, upload-time = "2026-06-15T22:33:14.992Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/1d/f6d3ca1ad0725f2e08a1c6915640748a52de2e66596160a4d53b010cccf0/google_auth-2.55.1-py3-none-any.whl", hash = "sha256:eada68dfd52b3b81191827601e2a0c3fa12540c818534b630ddc5355769c3995", size = 252349, upload-time = "2026-06-25T23:38:52.946Z" },
 ]
 
 [[package]]
@@ -2278,43 +2315,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz", hash = "sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c", size = 433602, upload-time = "2026-05-07T16:13:18.596Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl", hash = "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897", size = 131087, upload-time = "2026-05-07T16:13:17.151Z" },
-]
-
-[[package]]
-name = "videoinsight-v2"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "gdown" },
-    { name = "google-generativeai" },
-    { name = "openai-whisper" },
-    { name = "opencv-python" },
-    { name = "pillow" },
-    { name = "pydub" },
-    { name = "qdrant-client" },
-    { name = "requests" },
-    { name = "sentence-transformers" },
-    { name = "streamlit" },
-    { name = "torch" },
-    { name = "transformers" },
-    { name = "yt-dlp" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "gdown", specifier = "==5.2.0" },
-    { name = "google-generativeai", specifier = "==0.7.2" },
-    { name = "openai-whisper", specifier = "==20250625" },
-    { name = "opencv-python", specifier = "==4.10.0.84" },
-    { name = "pillow", specifier = "==10.4.0" },
-    { name = "pydub", specifier = "==0.25.1" },
-    { name = "qdrant-client", specifier = "==1.10.1" },
-    { name = "requests", specifier = "==2.32.3" },
-    { name = "sentence-transformers", specifier = "==3.0.1" },
-    { name = "streamlit", specifier = "==1.37.0" },
-    { name = "torch", specifier = "==2.4.0" },
-    { name = "transformers", specifier = "==4.44.0" },
-    { name = "yt-dlp", specifier = "==2026.6.9" },
 ]
 
 [[package]]
