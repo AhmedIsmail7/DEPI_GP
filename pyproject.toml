@@ -18,6 +18,8 @@ dependencies = [
     "Pillow==10.4.0",
     "requests==2.32.3",
     "pydub==0.25.1",
+    "python-dotenv>=1.2.2",
+    "cohere>=7.0.5",
 ]
 
 [build-system]
