@@ -1,50 +1,98 @@
-import os
-from dotenv import load_dotenv
-from qdrant_client import QdrantClient
-from sentence_transformers import SentenceTransformer
+try:
+    from qdrant_client import QdrantClient
+except Exception:  # pragma: no cover - optional dependency
+    QdrantClient = None
 
-load_dotenv()
+try:
+    from sentence_transformers import SentenceTransformer
+except Exception:  # pragma: no cover - optional dependency
+    SentenceTransformer = None
+
+from config import (
+    QDRANT_URL,
+    QDRANT_API_KEY,
+    COLLECTION_NAME,
+    TEXT_EMBEDDING_MODEL,
+)
+
 
 class SemanticRetriever:
-    def __init__(self, collection_name="vedex_knowledge"):
-        self.client = QdrantClient(url=os.getenv("QDRANT_URL"), api_key=os.getenv("QDRANT_API_KEY"))
-        self.collection_name = collection_name
-        self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
+
+    def __init__(self):
+        if QdrantClient is None or SentenceTransformer is None:
+            raise ImportError("qdrant-client and sentence-transformers are required for retrieval")
+
+        self.client = QdrantClient(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY
+        )
+
+        self.collection_name = COLLECTION_NAME
+
+        self.encoder = SentenceTransformer(
+            TEXT_EMBEDDING_MODEL
+        )
+
         print("--- [Retriever] Semantic Engine Initialized ---")
 
-    def retrieve(self, query: str, top_k: int = 3):
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 3
+    ):
         """
-        1. Encode query to 384-dim vector
-        2. Search in Qdrant
-        3. Return top matches with payload
+        Encode the query, search Qdrant,
+        and return the top matching chunks.
         """
-        # Encode query
-        query_vector = self.encoder.encode(query).tolist()
 
-        # Search
+        query_vector = self.encoder.encode(query)
+        if hasattr(query_vector, "tolist"):
+            query_vector = query_vector.tolist()
+
         search_results = self.client.search(
             collection_name=self.collection_name,
-            query_vector=("text_vector", query_vector),
+            query_vector=(
+                "text_vector",
+                query_vector
+            ),
             limit=top_k
         )
 
         results = []
+
         for hit in search_results:
+
             results.append({
-                "text": hit.payload.get("text"),
-                "timestamp": hit.payload.get("timestamp"),
-                "similarity": hit.score
+                "text": hit.payload["text"],
+                "timestamp": hit.payload["timestamp"],
+                "similarity": hit.score,
             })
-        
+
         return results
 
-# Singleton
-retriever = SemanticRetriever()
+
+retriever = None
+
+
+def get_retriever():
+    global retriever
+    if retriever is None:
+        retriever = SemanticRetriever()
+    return retriever
+
 
 if __name__ == "__main__":
-    test_query = "How to define a function in python?"
-    matches = retriever.retrieve(test_query)
-    
-    print(f"--- [Test Query]: {test_query} ---")
-    for m in matches:
-        print(f"Found: {m['text'][:50]}... | Time: {m['timestamp']}s | Score: {m['similarity']:.4f}")
+
+    test_query = "How do I define a function in Python?"
+
+    matches = get_retriever().retrieve(test_query)
+
+    print(f"\nQuery: {test_query}\n")
+
+    for i, match in enumerate(matches, start=1):
+
+        print(f"Result {i}")
+        print(f"Timestamp : {match['timestamp']} s")
+        print(f"Similarity: {match['similarity']:.4f}")
+        print(f"Text      : {match['text']}")
+        print("-" * 50)

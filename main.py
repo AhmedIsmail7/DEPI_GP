@@ -4,8 +4,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-def hi():
-    print("hello ya shabab")
-
-hi()
