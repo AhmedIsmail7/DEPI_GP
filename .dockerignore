@@ -1,0 +1,31 @@
+.venv
+.git
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+temp_assets
+videoinsight_v2.egg-info
+
+uv.lock
+
+.env
+
+# Build artifacts and local runtime files
+Video_result
+temp_assets
+*.pyc
+__pycache__
+.pytest_cache
+.venv
+venv
+.git
+.gitignore
+.github
+.vscode
+
+# Large model caches (should be provided via mounts, not copied into image)
+.cache
+cache
+

@@ -78,3 +78,26 @@ marimo/_static/
 temp_assets/
 transcript_chunks.json
 visual_embeddings.json
+
+# Local exports and runtime output
+Video_result/
+*.sqlite3
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Hugging Face / model caches (usually in home dir, but ignore if present)
+.cache/huggingface
+.cache/torch
+
+# Qdrant local persistence
+.qdrant/

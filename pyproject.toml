@@ -16,15 +16,35 @@ dependencies = [
     "streamlit==1.37.0",
     "google-generativeai==0.7.2",
     "Pillow==10.4.0",
-    "requests==2.32.3",
+        "requests==2.32.3",
     "pydub==0.25.1",
-    "python-dotenv>=1.2.2",
-    "cohere>=7.0.5",
+        "python-dotenv>=1.2.2",
+        "cohere>=7.0.5",
+        "numpy==1.24.3",
 ]
+
+authors = [
+    { name = "Video Insight Developers" }
+]
+license = { file = "LICENSE" }
+keywords = ["video", "transcription", "embeddings", "qdrant", "opencv", "streamlit"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.urls]
+Homepage = "https://example.com/"
+Repository = "https://github.com/your-org/depi-gp"
+
 
 [build-system]
 requires = ["setuptools>=70.1"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["modules"]
+[tool.setuptools.packages.find]
+include = ["modules*"]

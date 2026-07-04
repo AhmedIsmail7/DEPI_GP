@@ -68,3 +68,34 @@ python modules/ingest.py "<YOUTUBE_URL>"
 - **Phase 4 (RAG/Agent):** Planned.
 
 Developed for Graduation Project [2026]
+
+
+## 🔐 Security & Do Not Commit
+
+This project uses several private credentials and large artifacts that must NOT be committed to GitHub. Follow these rules:
+
+- Never commit your real secrets. Keep values for `COHERE_API_KEY`, `QDRANT_API_KEY`, and any cloud keys out of the repository.
+- Keep an environment file locally named `.env` (ignored by `.gitignore`). Use the provided `.env.example` to track variable names without values.
+- Do not commit large model caches or generated media files (`temp_assets/`, `Video_result/`, `.cache/`, model weights).
+
+Quick setup steps:
+
+1. Copy `.env.example` to `.env` and fill in your secret values:
+```bash
+cp .env.example .env
+# edit .env and add your keys
+```
+
+2. Verify `.env` is ignored by Git:
+```bash
+git check-ignore -v .env
+```
+
+3. When pushing to remote, ensure you don't include local outputs:
+```bash
+git status --short
+git add .
+git commit -m "chore: update configs"
+```
+
+For deployments, prefer using environment secrets (e.g., GitHub Actions secrets, Docker secrets, or platform environment variables) instead of committing `.env`.
