@@ -11,4 +11,12 @@ dependencies = [
     "streamlit>=1.57.0",
     "tensorflow>=2.21.0",
     "torch>=2.11.0",
+    "yt-dlp>=2024.1.1",
+    "gdown>=4.7.1",
+    "opencv-python>=4.8.1",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pytest>=7.4.2",
 ]

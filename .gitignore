@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# VideoInsight V2.0 Ingestion
+metadata/
+logs/
+*.mp4
+
