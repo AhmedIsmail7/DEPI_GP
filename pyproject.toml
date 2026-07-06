@@ -20,6 +20,9 @@ dependencies = [
     "pydub==0.25.1",
     "python-dotenv>=1.2.2",
     "cohere>=7.0.5",
+    "faster-whisper>=1.2.1",
+    "sentencepiece>=0.2.1",
+    "protobuf>=4.25.9",
 ]
 
 [build-system]

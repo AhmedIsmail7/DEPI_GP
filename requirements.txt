@@ -1,5 +1,4 @@
 torch==2.4.0
-openai-whisper==20250625
 transformers==4.44.0
 sentence-transformers==3.0.1
 yt-dlp==2026.06.09
@@ -11,3 +10,10 @@ google-generativeai==0.7.2
 Pillow==10.4.0
 requests==2.32.3
 pydub==0.25.1
+openai-whisper==20250625
+fastapi==0.111.0
+uvicorn==0.30.1
+cohere==5.5.7
+python-dotenv==1.0.1
+sentencepiece>=0.2.0
+protobuf>=4.25.0
