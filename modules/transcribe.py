@@ -87,35 +87,28 @@ class DualEmbeddingTranscriber:
             chunk_path = os.path.join(chunks_temp_dir, f"chunk_{i}.mp3")
             chunk.export(chunk_path, format="mp3")
 
-            # كشف اللغة وتثبيتها من أول مقطع فقط
             if current_video_language is None:
                 current_video_language = self.detect_video_language(chunk_path)
 
-            # A. استخراج النص (Transcription)
             result = self.transcriber.transcribe(
                 chunk_path, 
                 fp16=(self.device == "cuda"),
                 language=current_video_language
             )
             
-            # --- [التصحيح الآمن هنا] ---
-            # التأكد إن النص مش None قبل عمل strip، ولو None يتحول لـ string فاضي
             raw_text = result.get("text")
             text = raw_text.strip() if raw_text is not None else ""
             
             if os.path.exists(chunk_path):
                 os.remove(chunk_path)
 
-            # تخطي المقطع بأمان تام لو صامت أو أقصر من 3 حروف
             if not text or len(text) < 3:
                 print(f"[Skip] Chunk {i} ({start_ms/1000:.1f}s - {end_ms/1000:.1f}s): No speech detected.")
                 continue
 
-            # B. تشفير النص للـ RAG (بواسطة multilingual-e5)
             rag_formatted_text = f"passage: {text}"
             rag_vector = self.rag_encoder.encode(rag_formatted_text).tolist()
 
-            # C. تشفير النص للمطابقة البصرية (بواسطة SigLIP 2)
             siglip_vector = self.get_siglip_text_embedding(text)
 
             start_sec = round(start_ms / 1000, 2)
