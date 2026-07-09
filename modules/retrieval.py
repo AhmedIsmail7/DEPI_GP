@@ -2,13 +2,14 @@ import os
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
+from config import DATABASE
 
 load_dotenv()
 
 class SemanticRetriever:
-    def __init__(self, collection_name="vedex_knowledge"):
+    def __init__(self, collection_name=None):
         self.client = QdrantClient(url=os.getenv("QDRANT_URL"), api_key=os.getenv("QDRANT_API_KEY"))
-        self.collection_name = collection_name
+        self.collection_name = collection_name or getattr(DATABASE, "text_collection", "text_chunks")
         self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
         print("--- [Retriever] Semantic Engine Initialized ---")
 
@@ -24,15 +25,15 @@ class SemanticRetriever:
         # Search
         search_results = self.client.search(
             collection_name=self.collection_name,
-            query_vector=("text_vector", query_vector),
+            query_vector=query_vector,
             limit=top_k
         )
 
         results = []
         for hit in search_results:
             results.append({
-                "text": hit.payload.get("text"),
-                "timestamp": hit.payload.get("timestamp"),
+                "text": hit.payload.get("transcript") or hit.payload.get("text") or "",
+                "timestamp": hit.payload.get("start_time") if hit.payload.get("start_time") is not None else hit.payload.get("timestamp", 0.0),
                 "similarity": hit.score
             })
         

@@ -6,10 +6,13 @@ from pydub import AudioSegment
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModel
 
+DEFAULT_WHISPER_MODEL = os.getenv("TRANSCRIPTION_WHISPER_MODEL", "base")
+
+
 class DualEmbeddingTranscriber:
     def __init__(
         self, 
-        whisper_model="turbo", 
+        whisper_model=DEFAULT_WHISPER_MODEL,
         rag_embedding_model="intfloat/multilingual-e5-small", 
         siglip_model="google/siglip-base-patch16-224"
     ):
@@ -17,7 +20,7 @@ class DualEmbeddingTranscriber:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"--- [Init] Pipeline initializing on device: {self.device} ---")
         
-        # 1. Load Whisper Large V3 Turbo 
+        # 1. Load the configured Whisper model
         print(f"Loading Whisper model '{whisper_model}'...")
         self.transcriber = whisper.load_model(whisper_model, device=self.device)
         

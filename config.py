@@ -120,9 +120,9 @@ class VisionSettings(BaseSettings):
     keyframe_sampling_interval: int = 15  # seconds
     histogram_similarity_threshold: float = 0.95
     
-    # CLIP settings
+    # CLIP settings (legacy — replaced by SigLIP in vision pipeline)
     clip_model: str = "openai/clip-vit-base-patch32"
-    vision_embedding_dimension: int = 512
+    vision_embedding_dimension: int = 768  # SigLIP2 output dimension
     device: str = "cuda"  # or "cpu"
     
     # Logging
@@ -139,7 +139,7 @@ class DatabaseSettings(BaseSettings):
     )
     
     # Qdrant Cloud settings
-    qdrant_api_key: str = os.getenv("QDRANT_API_KEY", "")
+    qdrant_api_key: str | None = os.getenv("QDRANT_API_KEY")
     qdrant_url: str = os.getenv("QDRANT_URL", "http://localhost:6333")
     
     # Collections
@@ -147,8 +147,8 @@ class DatabaseSettings(BaseSettings):
     vision_collection: str = "video_frames"
     
     # Vector dimensions
-    text_vector_dim: int = 384  # from sentence-transformers
-    vision_vector_dim: int = 512  # from CLIP
+    text_vector_dim: int = 384   # sentence-transformers (all-MiniLM-L6-v2)
+    vision_vector_dim: int = 768  # SigLIP2 (google/siglip2-base-patch16-224)
     
     # Batch upload
     batch_size: int = 100
@@ -160,8 +160,6 @@ class DatabaseSettings(BaseSettings):
     @field_validator("qdrant_api_key")
     @classmethod
     def validate_api_key(cls, v):
-        if not v:
-            raise ValueError("QDRANT_API_KEY environment variable not set")
         return v
 
 
@@ -175,7 +173,7 @@ class RetrievalSettings(BaseSettings):
     )
     
     # Gemini API settings
-    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
     gemini_model: str = "gemini-2.0-flash"
     
     # Search settings
@@ -203,8 +201,6 @@ class RetrievalSettings(BaseSettings):
     @field_validator("gemini_api_key")
     @classmethod
     def validate_api_key(cls, v):
-        if not v:
-            raise ValueError("GEMINI_API_KEY environment variable not set")
         return v
 
 
@@ -237,10 +233,22 @@ class StreamlitSettings(BaseSettings):
 INGESTION = IngestionSettings()
 TRANSCRIPTION = TranscriptionSettings()
 VISION = VisionSettings()
-DATABASE = DatabaseSettings()
-RETRIEVAL = RetrievalSettings()
-STREAMLIT_CFG = StreamlitSettings()
+DATABASE = None
+RETRIEVAL = None
 
+STREAMLIT_CFG = StreamlitSettings()
+def get_database_settings():
+    global DATABASE
+    if DATABASE is None:
+        DATABASE = DatabaseSettings()
+    return DATABASE
+
+
+def get_retrieval_settings():
+    global RETRIEVAL
+    if RETRIEVAL is None:
+        RETRIEVAL = RetrievalSettings()
+    return RETRIEVAL
 
 # ==================== GLOBAL SETTINGS ====================
 
@@ -285,21 +293,25 @@ INGESTION_CONFIG = {
 }
 
 # Database
+_db = get_database_settings()
+
 QDRANT_CONFIG = {
-    "api_key": DATABASE.qdrant_api_key,
-    "url": DATABASE.qdrant_url,
-    "text_collection": DATABASE.text_collection,
-    "vision_collection": DATABASE.vision_collection,
+    "api_key": _db.qdrant_api_key,
+    "url": _db.qdrant_url,
+    "text_collection": _db.text_collection,
+    "vision_collection": _db.vision_collection,
 }
+
 
 # Retrieval
-GEMINI_CONFIG = {
-    "api_key": RETRIEVAL.gemini_api_key,
-    "model": RETRIEVAL.gemini_model,
-    "temperature": RETRIEVAL.temperature,
-    "max_tokens": RETRIEVAL.max_output_tokens,
-}
+_ret = get_retrieval_settings()
 
+GEMINI_CONFIG = {
+    "api_key": _ret.gemini_api_key,
+    "model": _ret.gemini_model,
+    "temperature": _ret.temperature,
+    "max_tokens": _ret.max_output_tokens,
+}
 
 # ==================== UTILITY FUNCTIONS ====================
 
@@ -347,12 +359,9 @@ def validate_configuration() -> bool:
         ValueError: If any critical configuration is missing
     """
     checks = [
-        (INGESTION.output_dir, "Ingestion output directory"),
-        (INGESTION.metadata_dir, "Metadata directory"),
-        (DATABASE.qdrant_api_key, "Qdrant API key"),
-        (RETRIEVAL.gemini_api_key, "Gemini API key"),
-    ]
-    
+    (INGESTION.output_dir, "Ingestion output directory"),
+    (INGESTION.metadata_dir, "Metadata directory"),
+]
     for config_value, config_name in checks:
         if not config_value:
             raise ValueError(f"Missing required configuration: {config_name}")

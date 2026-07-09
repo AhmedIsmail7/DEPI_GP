@@ -1,0 +1,18 @@
+{
+    "video_info": {
+        "video_id": "j02OZRjf2d8",
+        "source_url": "https://www.youtube.com/watch?v=j02OZRjf2d8",
+        "source_type": "youtube",
+        "local_path": "D:\\CLIP_0\\DEPI_GP\\downloads\\j02OZRjf2d8.mp4",
+        "duration_seconds": 1215.16,
+        "duration_formatted": "20:15",
+        "resolution": "640x360",
+        "fps": 25.0,
+        "frame_count": 30379,
+        "file_size_mb": 35.32
+    },
+    "ingestion_info": {
+        "ingested_at": "2026-07-09T17:42:38.086902Z",
+        "status": "ready_for_processing"
+    }
+}
