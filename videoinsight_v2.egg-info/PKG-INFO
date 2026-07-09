@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: videoinsight-v2
+Version: 0.1.0
+Requires-Python: >=3.12
+Requires-Dist: torch==2.4.0
+Requires-Dist: openai-whisper==20250625
+Requires-Dist: transformers==4.44.0
+Requires-Dist: sentence-transformers==3.0.1
+Requires-Dist: yt-dlp==2026.06.09
+Requires-Dist: gdown==5.2.0
+Requires-Dist: opencv-python==4.10.0.84
+Requires-Dist: qdrant-client==1.10.1
+Requires-Dist: streamlit==1.37.0
+Requires-Dist: google-generativeai==0.7.2
+Requires-Dist: Pillow==10.4.0
+Requires-Dist: requests==2.32.3
+Requires-Dist: pydub==0.25.1

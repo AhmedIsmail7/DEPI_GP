@@ -1,22 +1,33 @@
 [project]
 name = "depi-gp"
 version = "0.1.0"
-description = "Add your description here"
+description = "Real-time Educational Avatar System"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
-    "numpy>=2.4.4",
-    "pandas>=3.0.2",
-    "scikit-learn>=1.8.0",
-    "streamlit>=1.57.0",
-    "tensorflow>=2.21.0",
-    "torch>=2.11.0",
-    "yt-dlp>=2024.1.1",
-    "gdown>=4.7.1",
-    "opencv-python>=4.8.1",
-    "requests>=2.31.0",
-    "python-dotenv>=1.0.0",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "pytest>=7.4.2",
+    "torch==2.4.0",
+    "openai-whisper==20250625",
+    "transformers==4.44.0",
+    "sentence-transformers==3.0.1",
+    "yt-dlp==2026.06.09",
+    "gdown==5.2.0",
+    "opencv-python==4.10.0.84",
+    "qdrant-client==1.10.1",
+    "streamlit==1.37.0",
+    "google-generativeai==0.7.2",
+    "Pillow==10.4.0",
+    "requests==2.32.3",
+    "pydub==0.25.1",
+    "python-dotenv>=1.2.2",
+    "cohere>=7.0.5",
+    "faster-whisper>=1.2.1",
+    "sentencepiece>=0.2.1",
+    "protobuf>=4.25.9",
 ]
+
+[build-system]
+requires = ["setuptools>=70.1"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["modules"]
