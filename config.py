@@ -92,7 +92,7 @@ class TranscriptionSettings(BaseSettings):
     )
     
     # Whisper settings
-    whisper_model: str = "base"  # tiny, base, small, medium, large
+    whisper_model: str = "large-v3"  # tiny, base, small, medium, large, large-v3
     device: str = "cuda"  # or "cpu"
     
     # Text chunking
@@ -100,8 +100,8 @@ class TranscriptionSettings(BaseSettings):
     overlap_seconds: int = 5
     
     # Embeddings
-    embedding_model: str = "all-MiniLM-L6-v2"  # sentence-transformers
-    embedding_dimension: int = 384
+    embedding_model: str = "google/siglip-base-patch16-224"  # SigLIP
+    embedding_dimension: int = 768
     
     # Logging
     log_level: str = "INFO"
@@ -147,7 +147,7 @@ class DatabaseSettings(BaseSettings):
     vision_collection: str = "video_frames"
     
     # Vector dimensions
-    text_vector_dim: int = 384   # sentence-transformers (all-MiniLM-L6-v2)
+    text_vector_dim: int = 768   # SigLIP
     vision_vector_dim: int = 768  # SigLIP2 (google/siglip2-base-patch16-224)
     
     # Batch upload

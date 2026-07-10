@@ -128,7 +128,7 @@ class TestStorageManager(unittest.TestCase):
         return [
             {"chunk_index": i, "text": f"transcript chunk {i}",
              "start_time": i * 30.0, "end_time": (i + 1) * 30.0,
-             "embedding": [0.1] * 384}
+             "embedding": [0.1] * 768}
             for i in range(3)
         ]
 

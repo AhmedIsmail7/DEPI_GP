@@ -1,0 +1,18 @@
+{
+    "video_info": {
+        "video_id": "-DEL6SVRPw0",
+        "source_url": "https://youtu.be/-DEL6SVRPw0?si=ldG1VjiRorZWq13d",
+        "source_type": "youtube",
+        "local_path": "D:\\CLIP_0\\DEPI_GP\\downloads\\-DEL6SVRPw0.mp4",
+        "duration_seconds": 277.56,
+        "duration_formatted": "04:37",
+        "resolution": "640x360",
+        "fps": 25.0,
+        "frame_count": 6939,
+        "file_size_mb": 9.33
+    },
+    "ingestion_info": {
+        "ingested_at": "2026-07-10T13:13:39.730378Z",
+        "status": "ready_for_processing"
+    }
+}

@@ -71,8 +71,7 @@ class EmbeddingManager:
         self.text_cache_dirty = False
         self.image_cache_dirty = False
         
-        # Lazy model loading trigger
-        self._load_model()
+        # Lazy model loading trigger (will load on cache miss)
         self._initialized = True
 
     def _load_model(self):
@@ -144,6 +143,9 @@ class EmbeddingManager:
         if h in self.text_cache:
             return np.array(self.text_cache[h], dtype=np.float32)
 
+        if self.model is None:
+            self._load_model()
+
         inputs = self.processor(text=[text], padding="max_length", truncation=True, return_tensors="pt").to(self.device)
         features = self.model.get_text_features(**inputs)
         features = features / features.norm(dim=-1, keepdim=True)
@@ -161,6 +163,9 @@ class EmbeddingManager:
         h = self._hash_image(image)
         if h in self.image_cache:
             return np.array(self.image_cache[h], dtype=np.float32)
+
+        if self.model is None:
+            self._load_model()
 
         pil_image = image
         if isinstance(image, np.ndarray):
@@ -197,6 +202,8 @@ class EmbeddingManager:
                 missing_texts.append(texts[idx])
 
         if missing_texts:
+            if self.model is None:
+                self._load_model()
             inputs = self.processor(text=missing_texts, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
             features = self.model.get_text_features(**inputs)
             features = features / features.norm(dim=-1, keepdim=True)
@@ -236,6 +243,8 @@ class EmbeddingManager:
                 missing_images.append(img)
 
         if missing_images:
+            if self.model is None:
+                self._load_model()
             inputs = self.processor(images=missing_images, return_tensors="pt").to(self.device)
             features = self.model.get_image_features(**inputs)
             features = features / features.norm(dim=-1, keepdim=True)
