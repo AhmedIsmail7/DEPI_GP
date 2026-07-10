@@ -1,7 +1,8 @@
 import os
 import json
+import subprocess
+import sys
 from pydub import AudioSegment
-from faster_whisper import WhisperModel
 
 DEFAULT_WHISPER_MODEL = os.getenv("TRANSCRIPTION_WHISPER_MODEL", "large-v3")
 
@@ -12,22 +13,9 @@ class DualEmbeddingTranscriber:
         rag_embedding_model=None, # kept for backward compatibility
         siglip_model=None # kept for backward compatibility
     ):
-        # Local torch import to avoid memory fragmentation before Whisper loads
-        import torch
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.compute_type = "float16" if self.device == "cuda" else "int8"
-        print(f"--- [Init] Pipeline initializing on device: {self.device} (compute_type: {self.compute_type}) ---")
-        
-        # Load Faster-Whisper Model
-        print(f"Loading Faster-Whisper model '{whisper_model}'...")
-        cpu_threads = 1 if self.device == "cpu" else 0
-        self.transcriber = WhisperModel(
-            whisper_model, 
-            device=self.device, 
-            compute_type=self.compute_type,
-            cpu_threads=cpu_threads
-        )
-        print("--- [Init] Whisper Model Loaded Successfully ---")
+        self.device = "cuda" if os.environ.get("CUDA_AVAILABLE") == "True" else "cpu"
+        self.whisper_model = whisper_model
+        print(f"--- [Init] Pipeline initializing on device: {self.device} ---")
 
     def process_video_pipeline(self, video_path: str, output_dir: str = "temp_assets", chunk_ms: int = 30000, overlap_ms: int = 5000):
         if not os.path.exists(video_path):
@@ -52,18 +40,31 @@ class DualEmbeddingTranscriber:
             chunk_path = os.path.join(chunks_temp_dir, f"chunk_{i}.mp3")
             chunk.export(chunk_path, format="mp3")
 
-            segments, info = self.transcriber.transcribe(
-                chunk_path, 
-                beam_size=5,
-                language=current_video_language
-            )
-            segments = list(segments)
-            text = " ".join([seg.text for seg in segments]).strip()
+            # Execute transcription of this chunk in a separate clean process to prevent MKL memory allocation errors
+            cmd = [
+                sys.executable,
+                "modules/transcribe_chunk.py",
+                "--model", self.whisper_model,
+                "--audio", chunk_path,
+            ]
+            if current_video_language:
+                cmd.extend(["--language", current_video_language])
+                
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            text = ""
             
-            if current_video_language is None and info is not None:
-                current_video_language = info.language
-                print(f"--- [Language Detection] Locked Language: '{current_video_language}' (Confidence: {info.language_probability:.2f}) ---")
-            
+            if res.returncode != 0:
+                print(f"[Error] Chunk {i} transcription failed: {res.stderr}")
+            else:
+                try:
+                    data = json.loads(res.stdout.strip())
+                    text = data.get("text", "")
+                    if current_video_language is None and data.get("language"):
+                        current_video_language = data["language"]
+                        print(f"--- [Language Detection] Locked Language: '{current_video_language}' (Confidence: {data.get('language_probability', 0.0):.2f}) ---")
+                except Exception as je:
+                    print(f"[Error] Chunk {i} output parsing failed: {je}")
+
             if os.path.exists(chunk_path):
                 os.remove(chunk_path)
 
@@ -88,16 +89,6 @@ class DualEmbeddingTranscriber:
                 os.rmdir(chunks_temp_dir)
             except Exception:
                 pass
-
-        # Unload Whisper model to free memory before loading SigLIP
-        print("Unloading Whisper model to free memory...")
-        del self.transcriber
-        self.transcriber = None
-        import gc
-        gc.collect()
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
         print("Generating SigLIP text embeddings for all chunks...")
         # Local import of embedding_manager to prevent memory fragmentation during Whisper loading phase

@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
-from sentence_transformers import SentenceTransformer
+from modules.embeddings import embedding_manager
 from config import DATABASE
 
 load_dotenv()
@@ -10,17 +10,16 @@ class SemanticRetriever:
     def __init__(self, collection_name=None):
         self.client = QdrantClient(url=os.getenv("QDRANT_URL"), api_key=os.getenv("QDRANT_API_KEY"))
         self.collection_name = collection_name or getattr(DATABASE, "text_collection", "text_chunks")
-        self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
         print("--- [Retriever] Semantic Engine Initialized ---")
 
     def retrieve(self, query: str, top_k: int = 3):
         """
-        1. Encode query to 384-dim vector
+        1. Encode query to 768-dim SigLIP vector
         2. Search in Qdrant
         3. Return top matches with payload
         """
         # Encode query
-        query_vector = self.encoder.encode(query).tolist()
+        query_vector = embedding_manager.get_text_embedding(query).tolist()
 
         # Search
         search_results = self.client.search(
@@ -43,7 +42,7 @@ class SemanticRetriever:
 retriever = SemanticRetriever()
 
 if __name__ == "__main__":
-    test_query = "How to define a function in python?"
+    test_query = "What is machine learning?"
     matches = retriever.retrieve(test_query)
     
     print(f"--- [Test Query]: {test_query} ---")
