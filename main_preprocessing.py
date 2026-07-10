@@ -80,6 +80,8 @@ class PreprocessingOrchestrator:
         
         # Central GPU detection
         self.state.gpu_available = torch.cuda.is_available()
+        if not self.state.gpu_available:
+            torch.set_num_threads(1)
         logger.info(f"GPU Detection: CUDA is {'available' if self.state.gpu_available else 'UNAVAILABLE'}")
 
     def clean_temporary_files(self):

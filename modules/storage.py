@@ -6,8 +6,8 @@ Persists preprocessing outputs (transcripts and visual embeddings) into
 separate Qdrant vector collections for multimodal retrieval.
 
 Pipeline:
-    transcript_chunks.json  →  text_chunks  collection  (384-dim, SentenceTransformer)
-    visual_embeddings.json  →  video_frames collection  (768-dim, SigLIP2)
+    transcript_chunks.json  →  text_chunks  collection  (768-dim, Jina CLIP v2)
+    visual_embeddings.json  →  video_frames collection  (768-dim, Jina CLIP v2)
 
 This module does NOT implement retrieval, search, reranking, or LLM logic.
 """
@@ -42,8 +42,8 @@ if not logger.handlers:
 # ─── Constants (read from config, safe fallbacks) ─────────────────────────────
 TEXT_COLLECTION:   str = getattr(DATABASE, "text_collection",   "text_chunks")
 VISION_COLLECTION: str = getattr(DATABASE, "vision_collection", "video_frames")
-TEXT_DIM:    int = getattr(DATABASE, "text_vector_dim",   384)   # SentenceTransformer
-VISION_DIM:  int = getattr(DATABASE, "vision_vector_dim", 768)   # SigLIP2
+TEXT_DIM:    int = getattr(DATABASE, "text_vector_dim",   768)   # Jina CLIP v2
+VISION_DIM:  int = getattr(DATABASE, "vision_vector_dim", 768)   # Jina CLIP v2
 BATCH_SIZE:  int = getattr(DATABASE, "batch_size",        100)
 MAX_RETRIES: int = 3
 RETRY_BASE:  float = 2.0   # exponential base (seconds)
@@ -394,7 +394,7 @@ class StorageManager:
         report_meta: Dict,
         stats: CollectionStats,
     ) -> None:
-        """Upload vision frames to the video_frames collection (SigLIP2 768-dim)."""
+        """Upload vision frames to the video_frames collection (Jina CLIP v2 768-dim)."""
         t0 = time.time()
         actual_vision_dim = len(visual_embeddings[0].get("image_embedding", visual_embeddings[0].get("embedding", [])))
 
@@ -552,7 +552,7 @@ class StorageManager:
             msg = (
                 f"ConfigurationError: vision embedding dimension in data ({actual_vision_dim}) "
                 f"does not match config VISION_DIM ({VISION_DIM}). "
-                f"Ensure vision.py uses SigLIP2 (768-dim) and update config.py if needed."
+                f"Ensure vision.py uses Jina CLIP v2 (768-dim) and update config.py if needed."
             )
             result.errors.append(msg)
             logger.error(msg)

@@ -14,7 +14,7 @@ class SemanticRetriever:
 
     def retrieve(self, query: str, top_k: int = 3):
         """
-        1. Encode query to 768-dim SigLIP vector
+        1. Encode query to 768-dim Jina CLIP v2 vector
         2. Search in Qdrant
         3. Return top matches with payload
         """

@@ -3,7 +3,7 @@
 Vedex - Preprocessing Vision Module
 ====================================
 This module implements the vision pipeline. It samples frames from video chunks,
-filters them based on quality, generates embeddings using SigLIP,
+filters them based on quality, generates embeddings using Jina CLIP v2,
 and selects the best representative keyframe based purely on cosine similarity.
 """
 
@@ -249,15 +249,15 @@ class VisionProcessor:
                 logger.error(f"Chunk {chunk_idx}: Absolutely no frames could be extracted.")
                 continue
 
-            # Compute SigLIP text embedding
+            # Compute Jina CLIP v2 text embedding
             text_emb = embedding_manager.get_text_embedding(transcript)
 
-            # Compute SigLIP image embeddings for candidates
+            # Compute Jina CLIP v2 image embeddings for candidates
             frames_to_embed = [cand["frame"] for cand in candidates]
             try:
                 image_embs = embedding_manager.batch_image_embeddings(frames_to_embed)
             except Exception as e:
-                logger.error(f"SigLIP batch embedding failed for Chunk {chunk_idx}: {e}. Skipping.")
+                logger.error(f"Jina CLIP v2 batch embedding failed for Chunk {chunk_idx}: {e}. Skipping.")
                 continue
 
             # Find the candidate with highest cosine similarity

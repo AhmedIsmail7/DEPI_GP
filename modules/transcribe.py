@@ -90,13 +90,13 @@ class DualEmbeddingTranscriber:
             except Exception:
                 pass
 
-        print("Generating SigLIP text embeddings for all chunks...")
+        print("Generating Jina CLIP v2 text embeddings for all chunks...")
         # Local import of embedding_manager to prevent memory fragmentation during Whisper loading phase
         from modules.embeddings import embedding_manager
         
         siglip_data_output = []
         for chunk in raw_chunks:
-            # Encode with SigLIP
+            # Encode with Jina CLIP v2
             siglip_vector = embedding_manager.get_text_embedding(chunk["text"]).tolist()
             siglip_data_output.append({
                 "chunk_index": chunk["chunk_index"],
@@ -116,8 +116,8 @@ class DualEmbeddingTranscriber:
         with open(siglip_json_path, "w", encoding="utf-8") as f:
             json.dump(siglip_data_output, f, ensure_ascii=False, indent=4)
 
-        print("--- [Complete] Transcription & SigLIP Embedding Pipeline Finished Successfully ---")
-        print(f"SigLIP Text Embeddings saved to: {siglip_json_path}")
+        print("--- [Complete] Transcription & Jina CLIP v2 Embedding Pipeline Finished Successfully ---")
+        print(f"Jina CLIP v2 Text Embeddings saved to: {siglip_json_path}")
         
         return rag_json_path, siglip_json_path
 

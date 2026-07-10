@@ -100,7 +100,7 @@ class TranscriptionSettings(BaseSettings):
     overlap_seconds: int = 5
     
     # Embeddings
-    embedding_model: str = "google/siglip-base-patch16-224"  # SigLIP
+    embedding_model: str = "jinaai/jina-clip-v2"  # Jina CLIP v2
     embedding_dimension: int = 768
     
     # Logging
@@ -147,8 +147,8 @@ class DatabaseSettings(BaseSettings):
     vision_collection: str = "video_frames"
     
     # Vector dimensions
-    text_vector_dim: int = 768   # SigLIP
-    vision_vector_dim: int = 768  # SigLIP2 (google/siglip2-base-patch16-224)
+    text_vector_dim: int = 768   # Jina CLIP v2
+    vision_vector_dim: int = 768  # Jina CLIP v2
     
     # Batch upload
     batch_size: int = 100

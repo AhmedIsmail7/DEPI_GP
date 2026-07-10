@@ -1,8 +1,8 @@
 # modules/embeddings.py
 """
-Vedex - Preprocessing Embeddings Module
-========================================
-This module implements the singleton EmbeddingManager using Google SigLIP2
+Building Search Index - Preprocessing Embeddings Module
+========================================================
+This module implements the singleton EmbeddingManager using Jina CLIP v2
 for generating L2-normalized text and image embeddings with persistent caching.
 """
 
@@ -18,7 +18,6 @@ from typing import List, Union, Optional, Tuple
 import torch
 import numpy as np
 from PIL import Image
-from transformers import AutoProcessor, SiglipModel
 
 # Initialize logger
 logger = logging.getLogger("vedex.embeddings")
@@ -31,7 +30,7 @@ if not logger.handlers:
 
 class EmbeddingManager:
     """
-    Singleton class managing Google SigLIP2 model inference and embedding caches.
+    Singleton class managing Jina CLIP v2 model inference and embedding caches.
     """
     _instance = None
     _lock = threading.Lock()
@@ -49,10 +48,11 @@ class EmbeddingManager:
             return
         
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model_name = "google/siglip2-base-patch16-224"
+        if self.device == "cpu":
+            torch.set_num_threads(1)
+        self.model_name = "jinaai/jina-clip-v2"
         
         self.model = None
-        self.processor = None
         
         # Paths for persistent caches
         self.cache_dir = Path("temp_assets/cache")
@@ -77,17 +77,13 @@ class EmbeddingManager:
     def _load_model(self):
         logger.info(f"Loading model '{self.model_name}' on device '{self.device}'...")
         try:
-            self.model = SiglipModel.from_pretrained(self.model_name).to(self.device)
-            self.model.eval()
-            try:
-                self.processor = AutoProcessor.from_pretrained(self.model_name)
-            except Exception as pe:
-                logger.warning(f"Failed to load SigLIP2 processor ({pe}). Falling back to SigLIP1 processor...")
-                self.processor = AutoProcessor.from_pretrained("google/siglip-base-patch16-224")
-            logger.info("Model and processor loaded successfully.")
+            from sentence_transformers import SentenceTransformer
+            self.model = SentenceTransformer(self.model_name, device=self.device, trust_remote_code=True, truncate_dim=768)
+            self.model.max_seq_length = 256
+            logger.info("Jina CLIP v2 model loaded successfully.")
         except Exception as e:
-            logger.error(f"Failed to load model/processor: {e}")
-            raise RuntimeError(f"SigLIP2 initialization failed: {e}")
+            logger.error(f"Failed to load Jina CLIP v2 model: {e}")
+            raise RuntimeError(f"Jina CLIP v2 initialization failed: {e}")
 
     def _load_cache(self, path: Path) -> dict:
         if path.exists():
@@ -146,10 +142,7 @@ class EmbeddingManager:
         if self.model is None:
             self._load_model()
 
-        inputs = self.processor(text=[text], padding="max_length", truncation=True, return_tensors="pt").to(self.device)
-        features = self.model.get_text_features(**inputs)
-        features = features / features.norm(dim=-1, keepdim=True)
-        emb = features[0].cpu().numpy()
+        emb = self.model.encode([text], normalize_embeddings=True)[0]
         
         self.text_cache[h] = emb.tolist()
         self.text_cache_dirty = True
@@ -172,10 +165,7 @@ class EmbeddingManager:
             # Convert OpenCV BGR to PIL RGB
             pil_image = Image.fromarray(image[..., ::-1])
 
-        inputs = self.processor(images=[pil_image], return_tensors="pt").to(self.device)
-        features = self.model.get_image_features(**inputs)
-        features = features / features.norm(dim=-1, keepdim=True)
-        emb = features[0].cpu().numpy()
+        emb = self.model.encode([pil_image], normalize_embeddings=True)[0]
         
         self.image_cache[h] = emb.tolist()
         self.image_cache_dirty = True
@@ -204,10 +194,7 @@ class EmbeddingManager:
         if missing_texts:
             if self.model is None:
                 self._load_model()
-            inputs = self.processor(text=missing_texts, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
-            features = self.model.get_text_features(**inputs)
-            features = features / features.norm(dim=-1, keepdim=True)
-            embs = features.cpu().numpy()
+            embs = self.model.encode(missing_texts, normalize_embeddings=True)
 
             for idx, raw_idx in enumerate(missing_indices):
                 emb_list = embs[idx].tolist()
@@ -245,10 +232,7 @@ class EmbeddingManager:
         if missing_images:
             if self.model is None:
                 self._load_model()
-            inputs = self.processor(images=missing_images, return_tensors="pt").to(self.device)
-            features = self.model.get_image_features(**inputs)
-            features = features / features.norm(dim=-1, keepdim=True)
-            embs = features.cpu().numpy()
+            embs = self.model.encode(missing_images, normalize_embeddings=True)
 
             for idx, raw_idx in enumerate(missing_indices):
                 emb_list = embs[idx].tolist()
@@ -290,7 +274,6 @@ class EmbeddingManager:
         """
         Calculate cosine similarity between two vectors (or batches).
         """
-        # Since embeddings are already L2 normalized, cosine similarity is simply the dot product
         v1 = vec1.flatten()
         v2 = vec2.flatten()
         return float(np.dot(v1, v2))
