@@ -1,97 +1,68 @@
 import os
 import json
-import gc
 import torch
+import whisper
 import numpy as np
-import whisper as _ow          # used only for load_audio (16 kHz mono helper)
-from faster_whisper import WhisperModel
 from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModel
 
 # ─────────────────────────────────────────────────────────────
-#  Constants
+#  Constants  (tune here if needed)
 # ─────────────────────────────────────────────────────────────
-CHUNK_SEC      = 30           # length of each RAG chunk (seconds)
-OVERLAP_SEC    = 5            # overlap between consecutive chunks
+CHUNK_SEC      = 30          # length of each RAG chunk (seconds)
+OVERLAP_SEC    = 5           # overlap between chunks  (seconds)
 STEP_SEC       = CHUNK_SEC - OVERLAP_SEC   # 25 s effective step
-MIN_TEXT_LEN   = 3            # skip windows shorter than this
-RAG_BATCH_SIZE = 16
-SIG_BATCH_SIZE = 16
-
-# faster-whisper settings
-FW_BEAM_SIZE   = 5            # higher = more accurate, slower
-FW_BEST_OF     = 5            # candidates per beam step
-FW_PATIENCE    = 1.0          # beam patience
-FW_WORD_TS     = False        # word-level timestamps (not needed here)
-FW_VAD         = True         # Voice Activity Detection — skips silence fast
+MIN_TEXT_LEN   = 3           # skip chunks shorter than this
+RAG_BATCH_SIZE = 16          # sentence-transformer batch size
+SIG_BATCH_SIZE = 16          # siglip batch size
 
 
-class FasterWhisperTranscriber:
+class DualEmbeddingTranscriber:
     """
-    Drop-in replacement for transcribe2.py that uses faster-whisper instead
-    of openai-whisper.  Keeps the same 30-second sliding-window pipeline and
-    dual-embedding output format.
+    Memory-safe transcription + dual-embedding pipeline.
 
-    Why faster-whisper is better for Arabic + English:
-    ─────────────────────────────────────────────────
-    • CTranslate2 backend → 3-5× faster than openai-whisper on the same GPU.
-    • float16 compute type → halves VRAM usage vs FP32.
-    • Built-in VAD filter (Silero VAD) → skips silence automatically,
-      reducing hallucinations in silent segments.
-    • beam_size=5 + best_of=5 → same search width as openai-whisper default,
-      so transcript quality is identical or better.
-    • condition_on_previous_text=False → prevents the model from "copying"
-      previous text in noisy or repetitive segments (common Arabic issue).
+    Flow
+    ----
+    1.  Load audio entirely into RAM as a float32 numpy array
+        (no MP3 temp files written to disk).
+    2.  Detect language from the first 30 s.
+    3.  Transcribe the FULL audio with Whisper to get fine-grained
+        `segments` (each ~3-10 s with precise timestamps).
+    4.  Merge those segments into 30-second sliding-window chunks
+        with 5-second overlap — so vision.py gets the exact time
+        windows it expects.
+    5.  De-duplicate overlap: mark each segment as "used" so text
+        that falls in the overlap zone is not repeated twice.
+    6.  Batch-encode all chunks in one pass (RAG + SigLIP).
+    7.  Write two JSON files (rag_text_embeddings.json and
+        siglip_text_embeddings.json) — no intermediate files.
     """
 
     def __init__(
         self,
-        whisper_model:       str = "large-v3",   # best multilingual accuracy
+        whisper_model:      str = "turbo",
         rag_embedding_model: str = "intfloat/multilingual-e5-small",
-        siglip_model:        str = "google/siglip-base-patch16-224",
+        siglip_model:       str = "google/siglip-base-patch16-224",
     ):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        # Pick the best compute type supported by this GPU:
-        # - float16  → Turing+ (RTX, T4, A100 …  cc ≥ 7.0)
-        # - int8     → Pascal (GTX10xx / Quadro Pxxxx, cc 6.x)  ← P2000
-        # - int8     → CPU
-        #
-        # Note: int8_float16 ALSO requires cc ≥ 7.0 in CTranslate2,
-        # so Pascal must use plain int8.
-        if self.device == "cuda":
-            cc = torch.cuda.get_device_capability()   # e.g. (6, 1) for P2000
-            if cc[0] >= 7:
-                self.compute_type = "float16"
-            else:
-                self.compute_type = "int8"             # only option on Pascal
-        else:
-            self.compute_type = "int8"
-
         self.models_metadata = {
-            "whisper":        whisper_model,
-            "compute_type":   self.compute_type,
-            "rag_encoder":    rag_embedding_model,
+            "whisper":       whisper_model,
+            "rag_encoder":   rag_embedding_model,
             "siglip_encoder": siglip_model,
         }
 
-        cc_str = f"cc={torch.cuda.get_device_capability()[0]}.{torch.cuda.get_device_capability()[1]}" if self.device == "cuda" else "cpu"
-        print(f"--- [Init] Device: {self.device} ({cc_str})  compute_type: {self.compute_type} ---")
+        print(f"--- [Init] Pipeline starting on device: {self.device} ---")
 
-        # 1. faster-whisper
-        print(f"Loading faster-whisper '{whisper_model}' ({self.compute_type}) ...")
-        self.transcriber = WhisperModel(
-            whisper_model,
-            device=self.device,
-            compute_type=self.compute_type,
-        )
+        # 1. Whisper
+        print(f"Loading Whisper '{whisper_model}'...")
+        self.transcriber = whisper.load_model(whisper_model, device=self.device)
 
-        # 2. Multilingual E5 (RAG)
-        print(f"Loading RAG encoder '{rag_embedding_model}' ...")
+        # 2. Multilingual RAG encoder (E5)
+        print(f"Loading RAG encoder '{rag_embedding_model}'...")
         self.rag_encoder = SentenceTransformer(rag_embedding_model, device=self.device)
 
         # 3. SigLIP text encoder
-        print(f"Loading SigLIP text encoder '{siglip_model}' ...")
+        print(f"Loading SigLIP text encoder '{siglip_model}'...")
         self.siglip_tokenizer = AutoTokenizer.from_pretrained(siglip_model)
         self.siglip_model     = AutoModel.from_pretrained(siglip_model).to(self.device)
         self.siglip_model.eval()
@@ -99,97 +70,72 @@ class FasterWhisperTranscriber:
         print("--- [Init] All models loaded ---")
 
     # ──────────────────────────────────────────────────────────
-    #  Language detection  (uses first 30 s only)
+    #  Language detection  (in-memory, no disk I/O)
     # ──────────────────────────────────────────────────────────
     def _detect_language(self, audio_array: np.ndarray) -> str:
-        """
-        Use a short transcribe() call to detect language.
-        More reliable than detect_language() whose return type varies
-        across faster-whisper versions.
-        info.language and info.language_probability are always available.
-        """
-        sample = audio_array[:480_000].astype(np.float32)   # first 30 s
-
-        # beam_size=1 = fastest possible; we only care about info.language
-        _, info = self.transcriber.transcribe(
-            sample,
-            beam_size=1,
-            language=None,       # force auto-detection
-            vad_filter=False,    # skip VAD for speed on short sample
-        )
-        lang = info.language
-        prob = float(info.language_probability)
-        print(f"--- [Language] Detected: '{lang}'  (conf {prob:.2f}) ---")
+        sample = whisper.pad_or_trim(audio_array)          # first 30 s
+        mel    = whisper.log_mel_spectrogram(
+            sample, n_mels=self.transcriber.dims.n_mels
+        ).to(self.device)
+        _, probs = self.transcriber.detect_language(mel)
+        lang = max(probs, key=probs.get)
+        print(f"--- [Language] Detected: '{lang}'  (conf {probs[lang]:.2f}) ---")
         return lang
 
     # ──────────────────────────────────────────────────────────
-    #  Transcription  (returns list of dicts with start/end/text)
+    #  Merge Whisper segments → 30-second sliding-window chunks
     # ──────────────────────────────────────────────────────────
-    def _transcribe(self, audio_array: np.ndarray, lang: str) -> list:
+    def _merge_segments_to_chunks(
+        self,
+        segments:    list,
+        total_secs:  float,
+    ) -> list:
         """
-        Runs faster-whisper transcription and materialises the lazy generator
-        into a plain list of segment dicts.
+        For every 30-second window (step = 25 s), collect all Whisper
+        segments whose start time falls inside [window_start, window_end).
+        De-duplicate overlap by tracking which segment indices were already
+        used in a 'primary' window (i.e., a window where the segment starts
+        after the previous window's non-overlapping region).
         """
-        print("--- [Transcribe] Running faster-whisper transcription ---")
-        segments_gen, info = self.transcriber.transcribe(
-            audio_array.astype(np.float32),
-            language=lang,
-            beam_size=FW_BEAM_SIZE,
-            patience=FW_PATIENCE,
-            word_timestamps=FW_WORD_TS,
-            vad_filter=FW_VAD,
-            condition_on_previous_text=False,   # reduces copy-paste artefacts
-            compression_ratio_threshold=2.4,    # drop hallucinated segments
-            log_prob_threshold=-1.0,            # drop low-confidence segments
-            no_speech_threshold=0.6,            # VAD silence sensitivity
-        )
+        chunks        = []
+        used_primary  = set()          # segment indices already counted once
 
-        raw_segments = [
-            {"start": s.start, "end": s.end, "text": s.text}
-            for s in segments_gen
-        ]
-        print(f"--- [Transcribe] Got {len(raw_segments)} raw segments "
-              f"(duration detected: {info.duration:.1f}s) ---")
-        return raw_segments, info.duration
-
-    # ──────────────────────────────────────────────────────────
-    #  Merge fine segments → 30-second sliding-window chunks
-    # ──────────────────────────────────────────────────────────
-    def _merge_segments_to_chunks(self, segments: list, total_secs: float) -> list:
-        chunks       = []
-        used_primary = set()
-        start        = 0.0
-        chunk_idx    = 0
+        start = 0.0
+        chunk_idx = 0
 
         while start < total_secs:
             end = min(start + CHUNK_SEC, total_secs)
 
+            # Collect segments inside this window
             window_segs = [
                 s for s in segments
                 if s["start"] >= start and s["start"] < end
             ]
 
-            primary_segs, overlap_segs = [], []
+            # Text: only include segments not yet used as primary,
+            # OR all if this is the first window they appear in.
+            primary_segs = []
+            overlap_segs = []
             for s in window_segs:
-                key = f"{s['start']:.3f}"
-                if key not in used_primary:
+                if id(s) not in used_primary:
                     primary_segs.append(s)
-                    used_primary.add(key)
+                    used_primary.add(id(s))
                 else:
                     overlap_segs.append(s)
 
-            all_text = " ".join(
+            # Build text — primary segments first, then overlap context
+            all_segs_text = " ".join(
                 s["text"].strip()
                 for s in (primary_segs + overlap_segs)
                 if s["text"].strip()
             ).strip()
 
-            if len(all_text) >= MIN_TEXT_LEN:
+            if len(all_segs_text) >= MIN_TEXT_LEN:
                 chunks.append({
-                    "chunk_index":   chunk_idx,
-                    "start_time":    round(start, 2),
-                    "end_time":      round(end, 2),
-                    "text":          all_text,
+                    "chunk_index": chunk_idx,
+                    "start_time":  round(start, 2),
+                    "end_time":    round(end,   2),
+                    "text":        all_segs_text,
                     "segment_count": len(window_segs),
                 })
                 chunk_idx += 1
@@ -201,14 +147,16 @@ class FasterWhisperTranscriber:
         return chunks
 
     # ──────────────────────────────────────────────────────────
-    #  Batch SigLIP text embeddings
+    #  Batch SigLIP embeddings
     # ──────────────────────────────────────────────────────────
-    def _siglip_batch_encode(self, texts: list[str]) -> list[list[float]]:
+    def _siglip_batch_encode(
+        self, texts: list[str], batch_size: int = SIG_BATCH_SIZE
+    ) -> list[list[float]]:
         all_emb = []
         max_len = getattr(self.siglip_model.config, "max_position_embeddings", 64)
 
-        for i in range(0, len(texts), SIG_BATCH_SIZE):
-            batch  = texts[i : i + SIG_BATCH_SIZE]
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
             inputs = self.siglip_tokenizer(
                 batch,
                 padding="max_length",
@@ -219,7 +167,7 @@ class FasterWhisperTranscriber:
 
             with torch.no_grad():
                 feats = self.siglip_model.get_text_features(**inputs)
-                feats = feats / feats.norm(dim=-1, keepdim=True)
+                feats = feats / feats.norm(dim=-1, keepdim=True)   # L2-norm
                 all_emb.extend(feats.cpu().tolist())
 
         return all_emb
@@ -240,22 +188,26 @@ class FasterWhisperTranscriber:
 
         # ── Step 1: Load audio into RAM ───────────────────────
         print(f"--- [Load] Reading audio from: {video_path} ---")
-        audio_array = _ow.load_audio(video_path)   # float32, 16 kHz mono numpy array
-        total_secs  = len(audio_array) / 16_000
+        audio_array = whisper.load_audio(video_path)        # float32 numpy
+        total_secs  = len(audio_array) / whisper.audio.SAMPLE_RATE
         print(f"--- [Load] Duration: {total_secs:.1f} s ---")
 
-        # ── Step 2: Detect language ───────────────────────────
+        # ── Step 2: Language detection ────────────────────────
         lang = self._detect_language(audio_array)
 
-        # ── Step 3: Transcribe ────────────────────────────────
-        raw_segments, detected_duration = self._transcribe(audio_array, lang)
-
-        # Use Whisper's detected duration if available (more accurate)
-        if detected_duration and detected_duration > 0:
-            total_secs = detected_duration
+        # ── Step 3: Full transcription → fine segments ────────
+        print("--- [Transcribe] Running Whisper on full audio ---")
+        result = self.transcriber.transcribe(
+            audio_array,
+            fp16=(self.device == "cuda"),
+            language=lang,
+            verbose=False,
+        )
+        raw_segments = result.get("segments", [])
+        print(f"--- [Transcribe] Got {len(raw_segments)} raw segments ---")
 
         if not raw_segments:
-            print("[Warning] No speech detected.")
+            print("[Warning] Whisper returned no segments — no speech detected.")
             return None, None
 
         # ── Step 4: Merge into 30-second chunks ───────────────
@@ -274,23 +226,25 @@ class FasterWhisperTranscriber:
         rag_texts    = [f"passage: {c['text']}" for c in chunks]
         siglip_texts = [c["text"]               for c in chunks]
 
+        # RAG encoder (E5)
         rag_embs = self.rag_encoder.encode(
             rag_texts,
             batch_size=RAG_BATCH_SIZE,
             show_progress_bar=True,
-            normalize_embeddings=True,
+            normalize_embeddings=True,    # E5 wants L2-normed vectors
         ).tolist()
 
+        # SigLIP text encoder
         siglip_embs = self._siglip_batch_encode(siglip_texts)
 
         # ── Step 6: Build output payloads ─────────────────────
         metadata = {
-            "source_video":      os.path.basename(video_path),
+            "source_video":     os.path.basename(video_path),
             "detected_language": lang,
-            "total_chunks":      len(chunks),
-            "chunk_sec":         CHUNK_SEC,
-            "overlap_sec":       OVERLAP_SEC,
-            "models_used":       self.models_metadata,
+            "total_chunks":     len(chunks),
+            "chunk_sec":        CHUNK_SEC,
+            "overlap_sec":      OVERLAP_SEC,
+            "models_used":      self.models_metadata,
         }
 
         rag_payload    = {"metadata": metadata, "segments": []}
@@ -304,11 +258,11 @@ class FasterWhisperTranscriber:
                 "text":        chunk["text"],
             }
 
-            rag_seg              = base.copy()
+            rag_seg            = base.copy()
             rag_seg["embedding"] = rag_embs[idx]
             rag_payload["segments"].append(rag_seg)
 
-            sig_seg              = base.copy()
+            sig_seg            = base.copy()
             sig_seg["embedding"] = siglip_embs[idx]
             siglip_payload["segments"].append(sig_seg)
 
@@ -318,20 +272,15 @@ class FasterWhisperTranscriber:
                 f"| {len(chunk['text'])} chars"
             )
 
-        # ── Step 7: Write JSON ─────────────────────────────────
+        # ── Step 7: Write JSON (single atomic write per file) ─
         rag_path    = os.path.join(output_dir, "rag_text_embeddings.json")
         siglip_path = os.path.join(output_dir, "siglip_text_embeddings.json")
 
-        with open(rag_path, "w", encoding="utf-8") as f:
+        with open(rag_path,    "w", encoding="utf-8") as f:
             json.dump(rag_payload, f, ensure_ascii=False, indent=2)
 
         with open(siglip_path, "w", encoding="utf-8") as f:
             json.dump(siglip_payload, f, ensure_ascii=False, indent=2)
-
-        # Free VRAM
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
         print(f"\n--- [Done] {len(chunks)} chunks processed ---")
         print(f"  RAG    → {rag_path}")
@@ -340,28 +289,28 @@ class FasterWhisperTranscriber:
 
 
 # ─────────────────────────────────────────────────────────────
-#  Lazy singleton
+#  Lazy singleton  (loaded on first access, NOT at import time)
 # ─────────────────────────────────────────────────────────────
-_transcriber_instance: FasterWhisperTranscriber | None = None
+_transcriber_instance: DualEmbeddingTranscriber | None = None
 
 
-def get_transcriber() -> FasterWhisperTranscriber:
-    """Returns the module singleton, initialising it on first call."""
+def get_transcriber() -> DualEmbeddingTranscriber:
+    """Returns the singleton, initializing it on first call."""
     global _transcriber_instance
     if _transcriber_instance is None:
-        _transcriber_instance = FasterWhisperTranscriber()
+        _transcriber_instance = DualEmbeddingTranscriber()
     return _transcriber_instance
 
 
 # ─────────────────────────────────────────────────────────────
-#  Standalone CLI  —  python modules/transcribe.py
+#  Standalone CLI test
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import traceback
 
     folder = "temp_assets"
     os.makedirs(folder, exist_ok=True)
-    files = [
+    files  = [
         f for f in os.listdir(folder)
         if f.endswith((".mp4", ".mkv", ".avi", ".mp3", ".wav"))
     ]
