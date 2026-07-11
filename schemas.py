@@ -11,8 +11,8 @@ from typing import Optional
 import uuid
 
 
-TEXT_EMBEDDING_DIM = 384   # all-MiniLM-L6-v2
-IMAGE_EMBEDDING_DIM = 512  # CLIP ViT-B/32
+TEXT_EMBEDDING_DIM = 768   # was 384 (MiniLM) — now SigLIP, shared with image space
+IMAGE_EMBEDDING_DIM = 768  # was 512 (CLIP) — now SigLIP, shared with text space
 
 
 class TranscriptChunk(BaseModel):

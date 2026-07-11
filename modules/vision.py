@@ -1,107 +1,154 @@
+"""
+Vision module — samples candidate frames per transcript chunk, filters out
+low-quality candidates (black/blank frames, blurry frames, near-duplicates
+of the previously selected keyframe), then picks the one most semantically
+aligned with the chunk's text via SigLIP cosine similarity.
+
+Quality filtering + duplicate detection: rejecting bad candidates before
+scoring means the "best" frame is actually good, not just the best of a
+bad set.
+"""
+
 import os
 import json
 import cv2
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
 from PIL import Image
-from transformers import CLIPProcessor, CLIPModel
 
-from config import CLIP_MODEL_NAME, TEMP_ASSETS_DIR
+from config import (
+    TEMP_ASSETS_DIR, FRAME_SAMPLE_COUNT,
+    BLACK_FRAME_THRESHOLD, BLUR_THRESHOLD, DUPLICATE_FRAME_THRESHOLD,
+)
 from schemas import TranscriptChunk, VisualChunk
+from modules.embeddings import embedding_manager
 
 
 class SemanticVisionProcessor:
-    def __init__(self, model_name=CLIP_MODEL_NAME):
-        self.model_name = model_name
+    def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._model = None
-        self._processor = None
 
-    @property
-    def model(self):
-        if self._model is None:
-            print(f"Loading CLIP model '{self.model_name}' on {self.device}...")
-            self._model = CLIPModel.from_pretrained(self.model_name).to(self.device)
-        return self._model
+    # ---- Frame quality helpers ----
 
-    @property
-    def processor(self):
-        if self._processor is None:
-            self._processor = CLIPProcessor.from_pretrained(self.model_name)
-        return self._processor
+    def _calculate_phash(self, frame: np.ndarray) -> str:
+        """64-bit perceptual hash via DCT — used to detect near-duplicate frames."""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        resized = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA)
+        dct = cv2.dct(np.float32(resized))
+        dct_8x8 = dct[0:8, 0:8]
+        median = np.median(dct_8x8)
+        bits = (dct_8x8 > median).flatten()
+        return "".join("1" if b else "0" for b in bits)
 
-    def get_text_embedding(self, text: str):
-        """Encodes text using CLIP's text encoder to get 512-dim embedding."""
-        inputs = self.processor(text=[text], return_tensors="pt", padding=True, truncation=True).to(self.device)
-        with torch.no_grad():
-            output = self.model.get_text_features(**inputs)
-            # transformers 5.x returns BaseModelOutputWithPooling instead of a
-            # plain tensor (breaking change vs 4.x). .pooler_output still holds
-            # the fully projected 512-dim embedding either way — confirmed
-            # against the transformers source.
-            text_features = output.pooler_output if hasattr(output, "pooler_output") else output
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-        return text_features.squeeze(0)
+    def _phash_similarity(self, hash1: str, hash2: str) -> float:
+        if not hash1 or not hash2 or len(hash1) != len(hash2):
+            return 0.0
+        arr1 = np.frombuffer(hash1.encode("ascii"), dtype=np.uint8)
+        arr2 = np.frombuffer(hash2.encode("ascii"), dtype=np.uint8)
+        hamming = np.sum(arr1 != arr2)
+        return 1.0 - (hamming / len(hash1))
 
-    def get_frame_at_time(self, cap, timestamp_sec):
+    def _passes_quality_filter(self, frame: np.ndarray, previous_hash: str | None) -> tuple[bool, str | None, str | None]:
+        """Returns (passes, phash, rejection_reason)."""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        brightness = float(np.mean(gray))
+        if brightness < BLACK_FRAME_THRESHOLD:
+            return False, None, "black_frame"
+
+        sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        if sharpness < BLUR_THRESHOLD:
+            return False, None, "blurry"
+
+        current_hash = self._calculate_phash(frame)
+        if previous_hash is not None:
+            similarity = self._phash_similarity(current_hash, previous_hash)
+            if similarity > DUPLICATE_FRAME_THRESHOLD:
+                return False, current_hash, "duplicate"
+
+        return True, current_hash, None
+
+    def get_raw_frame_at_time(self, cap, timestamp_sec):
+        """Returns the raw BGR frame (np.ndarray) — quality filtering needs
+        the raw array; PIL conversion happens only for frames that survive
+        filtering, right before embedding."""
         cap.set(cv2.CAP_PROP_POS_MSEC, timestamp_sec * 1000)
         ret, frame = cap.read()
-        if ret:
-            return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        return None
+        return frame if ret else None
 
     def process_video_blocks(
-            self, video_path: str, video_id: str, transcript_chunks: list[TranscriptChunk],
-        ) -> list[VisualChunk]:
-            """Iterates over transcript chunks, extracts 5 candidate frames per
-            chunk window, and picks the one most semantically aligned with the
-            chunk's text via CLIP similarity."""
-            if not os.path.exists(video_path):
-                raise FileNotFoundError(f"Video file not found: {video_path}")
+        self, video_path: str, video_id: str, transcript_chunks: list[TranscriptChunk],
+    ) -> list[VisualChunk]:
+        """Iterates over transcript chunks, extracts candidate frames per
+        chunk window (filtering out black/blurry/duplicate ones), and picks
+        the one most semantically aligned with the chunk's text via SigLIP
+        similarity."""
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Video file not found: {video_path}")
 
-            cap = cv2.VideoCapture(video_path)
-            results: list[VisualChunk] = []
+        cap = cv2.VideoCapture(video_path)
+        results: list[VisualChunk] = []
+        previous_keyframe_hash: str | None = None
 
-            print(f"--- [Vision Engine] Aligning {len(transcript_chunks)} chunks for video_id={video_id} ---")
+        print(f"--- [Vision Engine] Aligning {len(transcript_chunks)} chunks for video_id={video_id} ---")
 
-            for chunk in transcript_chunks:
-                text_emb = self.get_text_embedding(chunk.text).to(self.device)
-                timestamps = np.linspace(chunk.start, chunk.end, 5)
+        for chunk in transcript_chunks:
+            text_emb = torch.tensor(embedding_manager.get_text_embedding(chunk.text))
+            timestamps = np.linspace(chunk.start, chunk.end, FRAME_SAMPLE_COUNT)
 
-                frames, valid_timestamps = [], []
-                for ts in timestamps:
-                    frame = self.get_frame_at_time(cap, ts)
-                    if frame:
-                        frames.append(frame)
-                        valid_timestamps.append(ts)
-
-                if not frames:
-                    print(f"Chunk {chunk.index}: No frames extracted, skipping.")
+            candidates = []  # list of (raw_frame, timestamp, phash)
+            for ts in timestamps:
+                frame = self.get_raw_frame_at_time(cap, ts)
+                if frame is None:
                     continue
+                passes, phash, rejection_reason = self._passes_quality_filter(frame, previous_keyframe_hash)
+                if passes:
+                    candidates.append((frame, ts, phash))
+                else:
+                    # 2. Print it so Modal catches it in the background logs stream
+                    print(f"   [Quality Filter] Frame at {round(ts, 2)}s rejected: {rejection_reason}")
 
-                inputs = self.processor(images=frames, return_tensors="pt").to(self.device)
-                with torch.no_grad():
-                    output = self.model.get_image_features(**inputs)
-                    image_features = output.pooler_output if hasattr(output, "pooler_output") else output
-                    image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+            # Fallback: if quality filtering rejected everything, use raw
+            # samples rather than skipping the chunk entirely — a mediocre
+            # frame beats none.
+            if not candidates:
+                for ts in timestamps:
+                    frame = self.get_raw_frame_at_time(cap, ts)
+                    if frame is not None:
+                        candidates.append((frame, ts, None))
 
-                similarities = F.cosine_similarity(image_features, text_emb.unsqueeze(0))
-                best_idx = torch.argmax(similarities).item()
+            if not candidates:
+                print(f"Chunk {chunk.index}: No frames extracted at all, skipping.")
+                continue
 
-                results.append(VisualChunk(
-                    video_id=video_id,
-                    chunk_index=chunk.index,
-                    timestamp=round(valid_timestamps[best_idx], 2),
-                    embedding=image_features[best_idx].cpu().numpy().tolist(),
-                    similarity_score=round(similarities[best_idx].item(), 4),
-                ))
+            frames_pil = [Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB)) for f, _, _ in candidates]
+            image_features = torch.tensor(
+                [embedding_manager.get_image_embedding(f) for f in frames_pil]
+            )
 
-                print(f"Chunk {chunk.index}: best frame @ {round(valid_timestamps[best_idx], 2)}s "
-                    f"| sim: {similarities[best_idx].item():.4f}")
+            similarities = F.cosine_similarity(image_features, text_emb.unsqueeze(0))
+            best_idx = torch.argmax(similarities).item()
+            best_frame, best_time, best_hash = candidates[best_idx]
+            best_score = similarities[best_idx].item()
 
-            cap.release()
-            return results
+            previous_keyframe_hash = best_hash or self._calculate_phash(best_frame)
+
+            results.append(VisualChunk(
+                video_id=video_id,
+                chunk_index=chunk.index,
+                timestamp=round(float(best_time), 2),
+                embedding=image_features[best_idx].cpu().numpy().tolist(),
+                similarity_score=round(best_score, 4),
+            ))
+
+            print(f"Chunk {chunk.index}: best frame @ {round(float(best_time), 2)}s "
+                  f"| sim: {best_score:.4f} | candidates passed filter: {len(candidates)}/{FRAME_SAMPLE_COUNT}")
+
+        cap.release()
+        embedding_manager.flush_caches()
+        print("--- [Vision Engine] Alignment complete. ---")
+        return results
 
 
 vision_engine = SemanticVisionProcessor()

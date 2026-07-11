@@ -1,6 +1,20 @@
+"""
+Ingestion module — routes YouTube/Google Drive URLs or direct file uploads
+to the appropriate handler, with duration limits and basic URL validation.
+
+URL sanitization + proactive Drive privacy detection were adapted from a
+teammate's more security-hardened ingest.py, trimmed to only what's
+actually justified for this app's real attack surface (no SQL database
+anywhere in this stack, so SQL-injection-style pattern checks were left
+out as not applicable here).
+"""
+
 import os
 import re
 import uuid
+from urllib.parse import urlparse
+
+import requests
 import yt_dlp
 import gdown
 
@@ -11,6 +25,47 @@ from config import TEMP_ASSETS_DIR, MAX_VIDEO_DURATION_SECONDS
 # falls back to the next. Kept consistent between check_duration() and
 # download_youtube() so both stages spoof the same client set.
 YOUTUBE_PLAYER_CLIENTS = ["android", "ios", "web_embedded"]
+
+ALLOWED_DOMAINS = {"youtube.com", "youtu.be", "drive.google.com"}
+
+# Characters with no legitimate reason to appear in a video URL. Rejecting
+# these is defense-in-depth against the URL ever being unsafely logged,
+# rendered, or passed to a shell context elsewhere in the stack — not
+# because yt-dlp/gdown themselves are shell-injection-vulnerable (they're
+# called via their Python APIs, not a shell command string).
+DANGEROUS_CHARS = set(";|`$<>\n\r")
+
+MAX_URL_LENGTH = 2000
+
+
+def _normalize_domain(netloc: str) -> str:
+    return netloc.lower().removeprefix("www.")
+
+
+def sanitize_url(url: str) -> None:
+    """
+    Rejects obviously malformed, oversized, or suspicious URLs before any
+    network call is made. Raises ValueError with a clear reason.
+    """
+    if not url or not isinstance(url, str):
+        raise ValueError("URL must be a non-empty string.")
+
+    if len(url) > MAX_URL_LENGTH:
+        raise ValueError(f"URL is unreasonably long ({len(url)} chars) — rejected.")
+
+    if any(ch in url for ch in DANGEROUS_CHARS):
+        raise ValueError("URL contains characters that are never valid in a video link.")
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"URL must use http:// or https:// — got scheme '{parsed.scheme}'.")
+
+    domain = _normalize_domain(parsed.netloc)
+    if not any(domain == d or domain.endswith("." + d) for d in ALLOWED_DOMAINS):
+        raise ValueError(
+            f"Domain '{parsed.netloc}' is not supported. "
+            f"Only YouTube and Google Drive links are accepted."
+        )
 
 
 def detect_source(url: str) -> str:
@@ -51,6 +106,28 @@ def _extract_gdrive_file_id(url: str) -> str | None:
     """
     match = re.search(r"/d/([a-zA-Z0-9_-]+)", url) or re.search(r"id=([a-zA-Z0-9_-]+)", url)
     return match.group(1) if match else None
+
+
+def _is_google_drive_public(url: str) -> bool:
+    """
+    Proactively checks whether a Google Drive link is publicly accessible
+    BEFORE attempting a full download — private links redirect to a Google
+    sign-in page, and this catches that redirect early with a clear error
+    rather than letting gdown attempt the download and fail confusingly
+    partway through (or worse, silently save the sign-in HTML page as if
+    it were the video, which is the exact bug fuzzy=True was added to
+    guard against separately).
+    """
+    try:
+        response = requests.get(url, allow_redirects=True, stream=True, timeout=10)
+        final_domain = _normalize_domain(urlparse(response.url).netloc)
+        response.close()
+        return "accounts.google.com" not in final_domain
+    except requests.RequestException:
+        # If the reachability check itself fails (network blip, timeout),
+        # don't block the real download attempt on it — let gdown's own
+        # error handling be the source of truth in that case.
+        return True
 
 
 def check_duration(url: str, limit_seconds=MAX_VIDEO_DURATION_SECONDS) -> dict:
@@ -100,7 +177,14 @@ def download_gdrive(url: str, limit_seconds=MAX_VIDEO_DURATION_SECONDS) -> tuple
             "Check that the link is a valid shareable file link."
         )
 
-    video_id = file_id
+    if not _is_google_drive_public(url):
+        raise ValueError(
+            "This Google Drive link requires sign-in (it redirects to a "
+            "Google login page), meaning it isn't shared publicly. Set "
+            "sharing to 'Anyone with the link' and try again."
+        )
+
+    video_id = file_id  # deterministic: same file always maps to the same ID
     output_path = os.path.join(TEMP_ASSETS_DIR, f"{video_id}.mp4")
 
     try:
@@ -142,6 +226,8 @@ def download_gdrive(url: str, limit_seconds=MAX_VIDEO_DURATION_SECONDS) -> tuple
 
 def download_video(url: str) -> tuple[str, str]:
     """Main routing logic. Returns (file_path, video_id)."""
+    sanitize_url(url)
+
     os.makedirs(TEMP_ASSETS_DIR, exist_ok=True)
     source_type = detect_source(url)
 

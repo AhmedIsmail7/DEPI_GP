@@ -3,13 +3,14 @@ import json
 import torch
 from pydub import AudioSegment
 import whisper
-from sentence_transformers import SentenceTransformer
+from modules.embeddings import embedding_manager
 
 from config import (
-    WHISPER_MODEL_SIZE, TEXT_EMBEDDING_MODEL,
+    WHISPER_MODEL_SIZE,
     CHUNK_DURATION_MS, OVERLAP_MS, TEMP_ASSETS_DIR, CHUNKS_SUBDIR,
 )
 from schemas import TranscriptChunk
+
 
 def compute_chunk_boundaries(total_ms: int, chunk_ms: int, overlap_ms: int) -> list[tuple[int, int]]:
     """
@@ -26,7 +27,6 @@ class Transcriber:
         self.model_size = model_size
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self._model = None
-        self._embedding_model = None
 
     @property
     def model(self):
@@ -36,13 +36,6 @@ class Transcriber:
             print(f"Loading Whisper model '{self.model_size}' on {self.device}...")
             self._model = whisper.load_model(self.model_size, device=self.device)
         return self._model
-
-    @property
-    def embedding_model(self):
-        if self._embedding_model is None:
-            print(f"Loading embedding model '{TEXT_EMBEDDING_MODEL}'...")
-            self._embedding_model = SentenceTransformer(TEXT_EMBEDDING_MODEL)
-        return self._embedding_model
 
     def process_audio_with_overlap(
         self, video_path: str, video_id: str,
@@ -68,7 +61,7 @@ class Transcriber:
 
             result = self.model.transcribe(chunk_path, fp16=(self.device == "cuda"))
             text = result["text"].strip()
-            vector = self.embedding_model.encode(text).tolist()
+            vector = embedding_manager.get_text_embedding(text)
 
             chunks.append(TranscriptChunk(
                 video_id=video_id,

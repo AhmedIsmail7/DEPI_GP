@@ -24,6 +24,7 @@ dependencies = [
     "kaggle>=2.2.3",
     "modal>=1.5.1",
     "fastapi>=0.139.0",
+    "sentencepiece>=0.2.1",
 ]
 
 [dependency-groups]

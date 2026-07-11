@@ -1,9 +1,8 @@
 import torch
 from qdrant_client import QdrantClient, models
-from sentence_transformers import SentenceTransformer
-from transformers import CLIPProcessor, CLIPModel
+from modules.embeddings import embedding_manager
 
-from config import QDRANT_URL, QDRANT_API_KEY, QDRANT_COLLECTION_NAME, TEXT_EMBEDDING_MODEL, CLIP_MODEL_NAME, DEFAULT_TOP_K
+from config import QDRANT_URL, QDRANT_API_KEY, QDRANT_COLLECTION_NAME, DEFAULT_TOP_K
 from schemas import RetrievalResult
 
 
@@ -48,46 +47,6 @@ class SemanticRetriever:
         self.client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
         self.collection_name = collection_name
 
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._text_encoder = None
-        self._clip_model = None
-        self._clip_processor = None
-
-    @property
-    def text_encoder(self):
-        if self._text_encoder is None:
-            print(f"Loading text embedding model '{TEXT_EMBEDDING_MODEL}'...")
-            self._text_encoder = SentenceTransformer(TEXT_EMBEDDING_MODEL)
-        return self._text_encoder
-
-    @property
-    def clip_model(self):
-        if self._clip_model is None:
-            print(f"Loading CLIP model '{CLIP_MODEL_NAME}'...")
-            self._clip_model = CLIPModel.from_pretrained(CLIP_MODEL_NAME).to(self.device)
-        return self._clip_model
-
-    @property
-    def clip_processor(self):
-        if self._clip_processor is None:
-            self._clip_processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
-        return self._clip_processor
-
-    def _encode_query_clip(self, query: str) -> list[float]:
-        """Encodes the query with CLIP's text encoder so it can be compared
-        against image_vector — the same embedding space the stored frame
-        vectors live in."""
-        inputs = self.clip_processor(text=[query], return_tensors="pt", padding=True, truncation=True).to(self.device)
-        with torch.no_grad():
-            output = self.clip_model.get_text_features(**inputs)
-            # transformers 5.x returns BaseModelOutputWithPooling instead of a
-            # plain tensor (breaking change vs 4.x). .pooler_output still holds
-            # the fully projected 512-dim embedding either way — confirmed
-            # against the transformers source.
-            features = output.pooler_output if hasattr(output, "pooler_output") else output
-            features = features / features.norm(dim=-1, keepdim=True)
-        return features.squeeze(0).cpu().tolist()
-
     def _search_named_vector(
         self, vector_name: str, query_vector: list[float], top_k: int, video_id: str | None,
     ):
@@ -109,21 +68,16 @@ class SemanticRetriever:
 
     def retrieve(self, query: str, top_k: int = DEFAULT_TOP_K, video_id: str | None = None) -> list[RetrievalResult]:
         """
-        Dual-modality retrieval:
-        1. Encode query with sentence-transformers -> search text_vector
-        2. Encode the same query with CLIP's text encoder -> search image_vector
-        3. Fuse both result sets by point ID, combining scores with a
-           weighted average (missing modality scores as 0 contribution).
-        4. Return results ranked by combined score.
+        Unified-space retrieval: a single SigLIP query embedding is compared
+        directly against both text_vector and image_vector, since both now
+        live in the same 768-dim space. Results are fused by point ID with
+        a weighted score combination.
         """
-        text_query_vector = self.text_encoder.encode(query).tolist()
-        clip_query_vector = self._encode_query_clip(query)
+        query_vector = embedding_manager.get_text_embedding(query)
 
-        # Search each modality independently. We over-fetch a bit (top_k * 2)
-        # since fusion may reorder which points end up in the final top_k.
         fetch_k = max(top_k * 2, top_k)
-        text_hits = self._search_named_vector("text_vector", text_query_vector, fetch_k, video_id)
-        visual_hits = self._search_named_vector("image_vector", clip_query_vector, fetch_k, video_id)
+        text_hits = self._search_named_vector("text_vector", query_vector, fetch_k, video_id)
+        visual_hits = self._search_named_vector("image_vector", query_vector, fetch_k, video_id)
 
         fused = fuse_search_results(text_hits, visual_hits, TEXT_WEIGHT, VISUAL_WEIGHT)
 

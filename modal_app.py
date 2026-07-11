@@ -27,10 +27,11 @@ image = (
     .apt_install("ffmpeg")
     .pip_install(
         "torch==2.4.0", "openai-whisper==20250625", "transformers==4.44.0",
-        "sentence-transformers==3.0.1", "yt-dlp", "gdown==5.2.0",
+        "yt-dlp", "gdown==5.2.0",
         "opencv-python-headless==4.10.0.84", "qdrant-client==1.10.1",
         "pillow==10.4.0", "pydub==0.25.1", "numpy>=1.26.0,<2.0.0",
         "fastapi[standard]", "python-multipart",
+        "sentencepiece",  # required by SiglipTokenizer
     )
     .add_local_python_source("modules", "config", "schemas")
 )
