@@ -16,7 +16,7 @@ from schemas import RetrievalResult
 
 # How we balance the scores.
 # Text is usually better for spoken lecture content, but visual search is 
-# awesome for catching equations on the whiteboard that the prof never reads out loud.
+# important for catching equations on the whiteboard that the prof never reads out loud.
 TEXT_WEIGHT = 0.7
 VISUAL_WEIGHT = 0.3
 
@@ -99,48 +99,67 @@ class VidExRetriever:
         text_hits = self._search_vector("text_vector", query_vector, fetch_k, video_id)
         visual_hits = self._search_vector("image_vector", query_vector, fetch_k, video_id)
 
-        # --- Fusion time ---
-        # If the same timestamp shows up in both results, merge them and keep the highest score.
-        fused: dict[float, dict] = {}
+        # --- Fusion time (Reciprocal Rank Fusion) ---
+        candidates = {} # timestamp -> payload
 
+        # 1. Process text hits (rank by chunk_index to avoid redundant frames flooding text ranks)
+        text_ranks = {} # chunk_index -> (rank, score)
+        t_rank = 0
+        seen_chunks = set()
         for hit in text_hits:
+            c_idx = hit.payload.get("chunk_index")
+            if c_idx not in seen_chunks:
+                text_ranks[c_idx] = (t_rank, hit.score)
+                seen_chunks.add(c_idx)
+                t_rank += 1
             ts = hit.payload.get("timestamp", 0.0)
-            if ts not in fused:
-                fused[ts] = {
-                    "text": hit.payload.get("text", ""),
-                    "timestamp": ts,
-                    "video_id": hit.payload.get("video_id", video_id),
-                    "text_score": hit.score,
-                    "visual_score": None,
-                }
-            else:
-                # same timestamp already seen — keep the higher text score
-                existing = fused[ts]["text_score"]
-                if existing is None or hit.score > existing:
-                    fused[ts]["text_score"] = hit.score
+            if ts not in candidates:
+                candidates[ts] = hit.payload
 
-        for hit in visual_hits:
+        # 2. Process visual hits (rank directly by timestamp)
+        visual_ranks = {} # timestamp -> (rank, score)
+        for rank, hit in enumerate(visual_hits):
             ts = hit.payload.get("timestamp", 0.0)
-            if ts not in fused:
-                fused[ts] = {
-                    "text": hit.payload.get("text", ""),
-                    "timestamp": ts,
-                    "video_id": hit.payload.get("video_id", video_id),
-                    "text_score": None,
-                    "visual_score": hit.score,
-                }
-            else:
-                existing = fused[ts]["visual_score"]
-                if existing is None or hit.score > existing:
-                    fused[ts]["visual_score"] = hit.score
+            visual_ranks[ts] = (rank, hit.score)
+            if ts not in candidates:
+                candidates[ts] = hit.payload
 
-        # Math out the final combined score and sort the results
-        for entry in fused.values():
-            t_score = entry["text_score"] or 0.0
-            v_score = entry["visual_score"] or 0.0
-            entry["combined_score"] = (TEXT_WEIGHT * t_score) + (VISUAL_WEIGHT * v_score)
+        # 3. Combine scores
+        fused = []
+        for ts, payload in candidates.items():
+            c_idx = payload.get("chunk_index")
+            t_data = text_ranks.get(c_idx)
+            v_data = visual_ranks.get(ts)
 
-        results = sorted(fused.values(), key=lambda x: x["combined_score"], reverse=True)
+            rrf = 0.0
+            t_score, v_score = None, None
+
+            if t_data is not None:
+                t_score = t_data[1]
+                rrf += 1.0 / (60 + t_data[0])
+            if v_data is not None:
+                v_score = v_data[1]
+                rrf += 1.0 / (60 + v_data[0])
+
+            fused.append({
+                "text": payload.get("text", ""),
+                "timestamp": ts,
+                "video_id": payload.get("video_id", video_id),
+                "chunk_index": c_idx,
+                "text_score": t_score,
+                "visual_score": v_score,
+                "combined_score": rrf # Use combined_score key to avoid changing downstream code
+            })
+
+        # 4. Deduplicate by chunk_index, keeping the timestamp with the highest RRF score
+        best_per_chunk = {}
+        for entry in fused:
+            c_idx = entry.get("chunk_index")
+            # If we already have a hit for this chunk, keep the one with the higher RRF score
+            if c_idx not in best_per_chunk or entry["combined_score"] > best_per_chunk[c_idx]["combined_score"]:
+                best_per_chunk[c_idx] = entry
+
+        results = sorted(best_per_chunk.values(), key=lambda x: x["combined_score"], reverse=True)
         return results[:limit]
 
 

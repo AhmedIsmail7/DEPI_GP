@@ -107,35 +107,40 @@ class QdrantManager:
         return retries_used  # unreachable, but keeps type-checkers happy
 
     def upsert_data(self, transcript_chunks: list[TranscriptChunk], visual_chunks: list[VisualChunk]) -> IndexingResult:
-        """Combines the text and visual chunks into one point and ships it to Qdrant."""
-        visual_by_index = {v.chunk_index: v for v in visual_chunks}
+        """Combines the text and visual chunks into points and ships them to Qdrant."""
+        from collections import defaultdict
+        visual_by_index = defaultdict(list)
+        for v in visual_chunks:
+            visual_by_index[v.chunk_index].append(v)
+            
         result = IndexingResult()
 
         points = []
         for chunk in transcript_chunks:
-            vis = visual_by_index.get(chunk.index)
-            if vis is None:
+            vis_list = visual_by_index.get(chunk.index)
+            if not vis_list:
                 result.skipped_no_visual_match += 1
                 continue
 
-            qpoint = QdrantPoint(
-                video_id=chunk.video_id,
-                chunk_index=chunk.index,
-                start=chunk.start,
-                end=chunk.end,
-                text=chunk.text,
-                timestamp=vis.timestamp,
-                similarity_score=vis.similarity_score,
-            )
+            for vis in vis_list:
+                qpoint = QdrantPoint(
+                    video_id=chunk.video_id,
+                    chunk_index=chunk.index,
+                    start=chunk.start,
+                    end=chunk.end,
+                    text=chunk.text,
+                    timestamp=vis.timestamp,
+                    similarity_score=vis.similarity_score,
+                )
 
-            points.append(models.PointStruct(
-                id=qpoint.point_id(),
-                vector={
-                    "text_vector": chunk.embedding,
-                    "image_vector": vis.embedding,
-                },
-                payload=qpoint.model_dump(exclude={"embedding"}, mode="json"),
-            ))
+                points.append(models.PointStruct(
+                    id=qpoint.point_id(),
+                    vector={
+                        "text_vector": chunk.embedding,
+                        "image_vector": vis.embedding,
+                    },
+                    payload=qpoint.model_dump(exclude={"embedding"}, mode="json"),
+                ))
 
         result.points_attempted = len(points)
         print(f"Uploading {len(points)} points to Qdrant...")

@@ -25,6 +25,18 @@ POLL_INTERVAL_SECONDS = 4
 POLL_TIMEOUT_SECONDS = 900  # 15 min ceiling, matches Modal function timeout
 
 st.set_page_config(page_title="VidEx", page_icon="🎓", layout="centered")
+
+# Inject CSS to automatically handle RTL text formatting (like Arabic)
+st.markdown("""
+    <style>
+    /* Make markdown text direction automatically adjust based on content (Arabic vs English) */
+    .stMarkdown p, .stMarkdown li, .stMarkdown div {
+        unicode-bidi: plaintext;
+        text-align: start;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("🎓 VidEx")
 st.caption("Multimodal RAG assistant for educational video content")
 
@@ -85,11 +97,14 @@ with tab_ask:
         from config import TEMP_ASSETS_DIR
         local_video_path = os.path.join(TEMP_ASSETS_DIR, f"{selected_video_id}.mp4")
         
+        if "vid_start_time" not in st.session_state:
+            st.session_state["vid_start_time"] = 0
+
         if len(selected_video_id) == 11 and not " " in selected_video_id:
             # Most likely a YouTube video ID
-            st.video(f"https://www.youtube.com/watch?v={selected_video_id}")
+            st.video(f"https://www.youtube.com/watch?v={selected_video_id}", start_time=st.session_state["vid_start_time"])
         elif os.path.exists(local_video_path):
-            st.video(local_video_path)
+            st.video(local_video_path, start_time=st.session_state["vid_start_time"])
         else:
             st.info("Video player unavailable: The original file is not stored locally.")
 
@@ -97,15 +112,29 @@ with tab_ask:
 
         # Initialize session state for this video
         session_key = f"messages_{selected_video_id}"
+        summary_key = f"summary_{selected_video_id}"
+        
         if session_key not in st.session_state:
             st.session_state[session_key] = [
                 {"role": "assistant", "content": "Hello! I am the professor. What questions do you have about this video?"}
             ]
+            
+        if summary_key not in st.session_state:
+            st.session_state[summary_key] = ""
 
         # Display chat history
-        for msg in st.session_state[session_key]:
+        for idx, msg in enumerate(st.session_state[session_key]):
             with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+                st.markdown(f'<div dir="auto">{msg["content"]}</div>', unsafe_allow_html=True)
+                if "sources" in msg and msg["sources"]:
+                    st.markdown("<br><b>Sources (Click to jump in video):</b>", unsafe_allow_html=True)
+                    cols = st.columns(len(msg["sources"]) * 2) 
+                    for s_idx, ts in enumerate(msg["sources"]):
+                        minutes, seconds = divmod(int(ts), 60)
+                        with cols[s_idx]:
+                            if st.button(f"⏱️ {minutes}:{seconds:02d}", key=f"hist_btn_{selected_video_id}_{idx}_{ts}"):
+                                st.session_state["vid_start_time"] = int(ts)
+                                st.rerun()
 
         # Optional screenshot uploader
         with st.expander("📸 Provide a screenshot of the current frame (optional)"):
@@ -142,21 +171,38 @@ with tab_ask:
                             query, 
                             results, 
                             video_id=selected_video_id, 
-                            current_frame_path=frame_path
+                            current_frame_path=frame_path,
+                            # Exclude the very last message which is the current query we just appended
+                            chat_history=st.session_state[session_key][:-1],
+                            rolling_summary=st.session_state[summary_key]
                         )
+                        
+                    if getattr(answer, "new_summary", None):
+                        st.session_state[summary_key] = answer.new_summary
 
-                    # Build Markdown response with sources
-                    full_response = answer.answer + "\n\n**Sources:**\n"
-                    for ts in sorted(set(answer.source_timestamps)):
-                        minutes, seconds = divmod(int(ts), 60)
-                        if len(selected_video_id) == 11:
-                            link = f"https://www.youtube.com/watch?v={selected_video_id}&t={int(ts)}s"
-                            full_response += f"- [{minutes}:{seconds:02d}]({link})\n"
-                        else:
-                            full_response += f"- Timestamp {minutes}:{seconds:02d}\n"
+                    # Build Markdown response 
+                    st.markdown(f'<div dir="auto">\n\n{answer.answer}\n\n</div>', unsafe_allow_html=True)
+                    
+                    # Store message with sources for history
+                    sources_list = sorted(set(answer.source_timestamps)) if answer.source_timestamps else []
+                    st.session_state[session_key].append({
+                        "role": "assistant", 
+                        "content": answer.answer,
+                        "sources": sources_list
+                    })
 
-                    st.markdown(full_response)
-                    st.session_state[session_key].append({"role": "assistant", "content": full_response})
+                    # Interactive Sources for the current message
+                    if sources_list:
+                        st.markdown("<br><b>Sources (Click to jump in video):</b>", unsafe_allow_html=True)
+                        cols = st.columns(len(sources_list) * 2) 
+                        for idx, ts in enumerate(sources_list):
+                            minutes, seconds = divmod(int(ts), 60)
+                            with cols[idx]:
+                                # We must use the exact same key as the history loop to ensure clicks register perfectly
+                                hist_idx = len(st.session_state[session_key]) - 1
+                                if st.button(f"⏱️ {minutes}:{seconds:02d}", key=f"hist_btn_{selected_video_id}_{hist_idx}_{ts}"):
+                                    st.session_state["vid_start_time"] = int(ts)
+                                    st.rerun()
 
             # Clean up the temporary file
             if frame_path and os.path.exists(frame_path):

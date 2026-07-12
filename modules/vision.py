@@ -94,7 +94,6 @@ class SemanticVisionProcessor:
         print(f"--- [Vision Engine] Aligning {len(transcript_chunks)} chunks for video_id={video_id} ---")
 
         for chunk in transcript_chunks:
-            text_emb = torch.tensor(embedding_manager.get_text_embedding(chunk.text))
             timestamps = np.linspace(chunk.start, chunk.end, FRAME_SAMPLE_COUNT)
 
             candidates = []  # list of (raw_frame, timestamp, phash)
@@ -105,18 +104,21 @@ class SemanticVisionProcessor:
                 passes, phash, rejection_reason = self._passes_quality_filter(frame, previous_keyframe_hash)
                 if passes:
                     candidates.append((frame, ts, phash))
+                    # Crucially: update the hash immediately so the NEXT frame is compared against THIS frame,
+                    # not the frame from the previous chunk. This allows multiple distinct frames per chunk!
+                    previous_keyframe_hash = phash
                 else:
                     # 2. Print it so Modal catches it in the background logs stream
                     print(f"   [Quality Filter] Frame at {round(ts, 2)}s rejected: {rejection_reason}")
 
-            # Fallback: if quality filtering rejected everything, use raw
-            # samples rather than skipping the chunk entirely — a mediocre
-            # frame beats none.
+            # Fallback: if quality filtering rejected everything, use the first available raw sample
+            # so we don't completely lose visual context for this chunk.
             if not candidates:
                 for ts in timestamps:
                     frame = self.get_raw_frame_at_time(cap, ts)
                     if frame is not None:
                         candidates.append((frame, ts, None))
+                        break
 
             if not candidates:
                 print(f"Chunk {chunk.index}: No frames extracted at all, skipping.")
@@ -127,23 +129,18 @@ class SemanticVisionProcessor:
                 [embedding_manager.get_image_embedding(f) for f in frames_pil]
             )
 
-            similarities = F.cosine_similarity(image_features, text_emb.unsqueeze(0))
-            best_idx = torch.argmax(similarities).item()
-            best_frame, best_time, best_hash = candidates[best_idx]
-            best_score = similarities[best_idx].item()
+            # Keep ALL high-quality candidate frames
+            for i in range(len(candidates)):
+                frame, ts, phash = candidates[i]
+                results.append(VisualChunk(
+                    video_id=video_id,
+                    chunk_index=chunk.index,
+                    timestamp=round(float(ts), 2),
+                    embedding=image_features[i].cpu().numpy().tolist(),
+                    similarity_score=1.0,  # Legacy field, we no longer compute text alignment score here
+                ))
 
-            previous_keyframe_hash = best_hash or self._calculate_phash(best_frame)
-
-            results.append(VisualChunk(
-                video_id=video_id,
-                chunk_index=chunk.index,
-                timestamp=round(float(best_time), 2),
-                embedding=image_features[best_idx].cpu().numpy().tolist(),
-                similarity_score=round(best_score, 4),
-            ))
-
-            print(f"Chunk {chunk.index}: best frame @ {round(float(best_time), 2)}s "
-                  f"| sim: {best_score:.4f} | candidates passed filter: {len(candidates)}/{FRAME_SAMPLE_COUNT}")
+            print(f"Chunk {chunk.index}: kept {len(candidates)} distinct frame(s) out of {FRAME_SAMPLE_COUNT}")
 
         cap.release()
         embedding_manager.flush_caches()

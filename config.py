@@ -46,6 +46,9 @@ UPSERT_BASE_DELAY_SECONDS = 1.0
 # --- Retrieval ---
 DEFAULT_TOP_K = 3
 
+# --- LLM Chat Memory ---
+CHAT_HISTORY_TOKEN_LIMIT = 500
+
 # --- Startup validation ---
 def validate_env():
     """Run this at startup to crash immediately if you forgot to set your API keys."""

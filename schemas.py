@@ -82,7 +82,7 @@ class QdrantPoint(BaseModel):
         If we re-ingest a video, this ensures we overwrite the old data 
         instead of making duplicates.
         """
-        raw = f"{self.video_id}_{self.chunk_index}"
+        raw = f"{self.video_id}_{self.chunk_index}_{self.timestamp}"
         return str(uuid.uuid5(VIDEX_NAMESPACE, raw))
 
 
@@ -102,3 +102,4 @@ class LLMAnswer(BaseModel):
     answer: str
     source_timestamps: list[float]
     video_id: Optional[str] = None
+    new_summary: Optional[str] = None

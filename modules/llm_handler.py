@@ -19,7 +19,7 @@ from google.genai import types
 from PIL import Image
 from tenacity import retry, wait_exponential, stop_after_attempt
 
-from config import GEMINI_API_KEY, GEMINI_MODEL
+from config import GEMINI_API_KEY, GEMINI_MODEL, CHAT_HISTORY_TOKEN_LIMIT
 from schemas import RetrievalResult, LLMAnswer
 
 
@@ -39,11 +39,11 @@ SYSTEM_PROMPT = (
     "3. If the video context alone isn't enough to fully answer the question, "
     "you CAN use your general knowledge — but you MUST tell the student: "
     "\"This part goes beyond what was covered in the video.\"\n"
-    "4. Cite video sources using bracket indices (e.g., [1], [2]) when "
-    "referencing specific timestamps.\n"
-    "5. If a current video frame is provided, the student is looking at that "
+    "4. Format your output clearly and naturally using markdown. Do not insert numeric citation brackets (e.g. [1], [2]) into your text.\n"
+    "5. When mentioning a specific time in the video, always use the MM:SS format (e.g., 2:05) instead of raw seconds.\n"
+    "6. If a current video frame is provided, the student is looking at that "
     "exact moment right now. Reference it directly in your answer.\n"
-    "6. Keep explanations clear and conversational — you're teaching, not "
+    "7. Keep explanations clear and conversational — you're teaching, not "
     "writing a paper."
 )
 
@@ -68,7 +68,7 @@ class VidExGenerator:
 
         print(f"[LLM] Gemini handler ready — model: {self.model_id}")
 
-    def _make_cache_key(self, query: str, contexts: list, frame_path: str | None) -> str:
+    def _make_cache_key(self, query: str, contexts: list, frame_path: str | None, chat_history: list[dict] | None = None, rolling_summary: str = "") -> str:
         """Create a unique hash for the question + context so we can cache it."""
         raw = query + "||"
         for item in contexts:
@@ -77,7 +77,20 @@ class VidExGenerator:
             raw += f"{text}:{ts}||"
         if frame_path:
             raw += frame_path
+        if rolling_summary:
+            raw += f"Summary:{rolling_summary}||"
+        if chat_history:
+            # We don't hash all history, just what is passed in (which is token-capped)
+            for msg in chat_history:
+                if isinstance(msg, dict):
+                    raw += f"{msg.get('role', '')}:{msg.get('content', '')}||"
+                else:
+                    raw += f"{msg}||"
         return hashlib.sha256(raw.encode()).hexdigest()
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Rough estimation: 1 token ≈ 4 characters."""
+        return len(text) // 4
 
     def _cache_get(self, key: str) -> str | None:
         return self._cache.get(key)
@@ -97,10 +110,11 @@ class VidExGenerator:
         stop=stop_after_attempt(4),
         reraise=True,
     )
-    def _call_gemini(self, contents: list, system_instruction: str) -> str:
+    def _call_gemini(self, contents: list, system_instruction: str, model_id: str | None = None) -> str:
         """Actually hits the Gemini API. Auto-retries a few times if it fails."""
+        target_model = model_id if model_id else self.model_id
         response = self.client.models.generate_content(
-            model=self.model_id,
+            model=target_model,
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -110,30 +124,109 @@ class VidExGenerator:
         return response.text
 
     def generate_answer(self, user_query: str, contexts: list,
-                        current_frame_path: str | None = None) -> str:
+                        current_frame_path: str | None = None,
+                        chat_history: list[dict] | None = None,
+                        rolling_summary: str = "") -> tuple[str, str | None]:
         """
-        Builds the prompt and asks Gemini.
+        Builds the prompt and asks Gemini. Returns (answer, new_summary)
         
         It knows how to deal with:
           1. Just text (no images)
           2. Slide frames retrieved from the DB
           3. A screenshot the user just took
+          4. Token-capped conversational context and rolling summaries
         """
-        # Check cache first
-        cache_key = self._make_cache_key(user_query, contexts, current_frame_path)
+        # 1. Budgeting Logic
+        recent_history = []
+        overflow_history = []
+        
+        if chat_history:
+            budget = CHAT_HISTORY_TOKEN_LIMIT
+            # Walk backwards through Q/A pairs (assuming length is even, or just stepping backwards)
+            # We add messages in pairs if possible to maintain context
+            i = len(chat_history) - 1
+            while i >= 0:
+                msg = chat_history[i]
+                role_label = "Student" if msg["role"] == "user" else "Professor"
+                formatted_msg = f"{role_label}: {msg['content']}\n\n"
+                msg_tokens = self._estimate_tokens(formatted_msg)
+                
+                if budget - msg_tokens >= 0:
+                    recent_history.insert(0, formatted_msg)
+                    budget -= msg_tokens
+                    i -= 1
+                else:
+                    break
+            
+            # Any messages that didn't fit are overflow
+            if i >= 0:
+                overflow_history = chat_history[:i+1]
+                
+        # 2. Rolling Summarization (Synchronous Blocking Call)
+        # Note: This executes synchronously on the critical path, adding latency. 
+        # However, it only fires intermittently when the token budget overflows.
+        new_summary = None
+        if overflow_history:
+            print(f"[LLM] History exceeded budget. Summarizing {len(overflow_history)} overflow messages...")
+            overflow_text = ""
+            for msg in overflow_history:
+                role = "Student" if msg["role"] == "user" else "Professor"
+                overflow_text += f"{role}: {msg['content']}\n"
+                
+            summary_prompt = (
+                "You are an AI maintaining conversational memory.\n"
+                "Update the existing rolling summary with the new overflow conversation turns.\n"
+                "Keep it strictly under 150 tokens (1-3 sentences): focus on the core topic, key entities, and any unresolved questions.\n\n"
+                f"Existing Summary: {rolling_summary if rolling_summary else 'None'}\n\n"
+                f"New Overflow Turns:\n{overflow_text}\n\n"
+                "Return ONLY the updated summary text."
+            )
+            
+            try:
+                # Use flash-lite explicitly for summarization (fastest/cheapest tier)
+                raw_new_summary = self._call_gemini([summary_prompt], "Maintain the rolling summary.", model_id="gemini-3.1-flash-lite")
+                
+                # Hard truncate backstop in case the model ignores the prompt length instruction (approx 150 tokens = 600 chars)
+                if len(raw_new_summary) > 600:
+                    raw_new_summary = raw_new_summary[:597] + "..."
+                    
+                new_summary = raw_new_summary
+                rolling_summary = new_summary
+            except Exception as e:
+                print(f"[LLM] Warning: Summarization failed ({e}). Keeping existing summary.")
+                # Fallback: keep previous summary, don't break the user's answer
+                new_summary = rolling_summary
+
+        # Check cache first (using the updated rolling summary and token-capped recent history)
+        # Note: The cache is global per VidExGenerator instance. 
+        # If chat_history is empty, rolling_summary is empty, so standalone questions bypass the summary
+        # completely and hit the cache reliably across all users/sessions.
+        cache_key = self._make_cache_key(user_query, contexts, current_frame_path, recent_history, rolling_summary)
         cached = self._cache_get(cache_key)
         if cached is not None:
             print("[LLM] Cache hit — skipping API call.")
-            return cached
+            return cached, new_summary
 
         # Build the text context block from retrieved chunks
         context_block = ""
-        for i, item in enumerate(contexts, start=1):
+        for idx, item in enumerate(contexts, start=1):
             text = getattr(item, "text", "No transcript available.")
             timestamp = getattr(item, "timestamp", 0.0)
-            context_block += f"[{i}] Timestamp {timestamp}s: {text}\n"
+            minutes, seconds = divmod(int(timestamp), 60)
+            context_block += f"[{idx}] Timestamp {minutes}:{seconds:02d}: {text}\n"
 
-        prompt_text = f"Student Question: {user_query}\n\nVideo Transcripts:\n{context_block}"
+        # Build history context block
+        history_text = ""
+        if rolling_summary:
+            history_text += f"Previous Conversation Summary:\n{rolling_summary}\n\n"
+            
+        if recent_history:
+            history_text += "Recent Conversation History:\n" + "".join(recent_history)
+            
+        if history_text:
+            history_text += "---\n\n"
+
+        prompt_text = f"{history_text}Student Question: {user_query}\n\nVideo Transcripts:\n{context_block}"
 
         # Assemble the multimodal content array
         api_contents = [prompt_text]
@@ -162,9 +255,9 @@ class VidExGenerator:
                     # if the image is missing or broken, just ignore it and keep going
                     continue
 
-        answer = self._call_gemini(api_contents, SYSTEM_PROMPT)
-        self._cache_put(cache_key, answer)
-        return answer
+        answer_text = self._call_gemini(api_contents, SYSTEM_PROMPT)
+        self._cache_put(cache_key, answer_text)
+        return answer_text, new_summary
 
 
 # -----------------------------------------------
@@ -181,11 +274,15 @@ class LLMAdapter:
 
     def generate_response(self, query: str, context_chunks: list[RetrievalResult],
                           video_id: str | None = None,
-                          current_frame_path: str | None = None) -> LLMAnswer:
-        raw_answer = self.engine.generate_answer(
+                          current_frame_path: str | None = None,
+                          chat_history: list[dict] | None = None,
+                          rolling_summary: str = "") -> LLMAnswer:
+        raw_answer, new_summary = self.engine.generate_answer(
             user_query=query,
             contexts=context_chunks,
             current_frame_path=current_frame_path,
+            chat_history=chat_history,
+            rolling_summary=rolling_summary
         )
 
         # Pull the timestamps out so we can display them nicely in the UI
@@ -199,6 +296,7 @@ class LLMAdapter:
             answer=raw_answer,
             source_timestamps=timestamps,
             video_id=video_id,
+            new_summary=new_summary,
         )
 
 

@@ -204,6 +204,9 @@ cython_debug/
 *.mp4
 temp_assets/
 tempCodeRunnerFile.py
+ffmpeg_temp/
+*.zip
+ffmpeg*/
 
 # Ruff stuff:
 .ruff_cache/
