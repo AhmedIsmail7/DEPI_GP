@@ -1,11 +1,9 @@
 """
-Dual-modality retrieval for VidEx.
+Multimodal Retrieval Module.
 
-We hit both the text index (Whisper) and the image index (SigLIP) in Qdrant,
-mash the results together by timestamp so we don't get duplicates,
-and hand the best context chunks back to the LLM.
-
-Everything uses the shared 768-dim SigLIP model so we're comparing apples to apples.
+Executes parallel searches against both text and visual vector indices in Qdrant.
+Results are deduplicated and merged by timestamp to provide the LLM with 
+a unified contextual context window.
 """
 
 from qdrant_client import QdrantClient, models
@@ -14,17 +12,16 @@ from config import QDRANT_URL, QDRANT_API_KEY, QDRANT_COLLECTION_NAME, DEFAULT_T
 from schemas import RetrievalResult
 
 
-# How we balance the scores.
-# Text is usually better for spoken lecture content, but visual search is 
-# important for catching equations on the whiteboard that the prof never reads out loud.
+# Hyperparameters for score fusion.
+# Text provides primary narrative context; visual catches non-verbal data.
 TEXT_WEIGHT = 0.7
 VISUAL_WEIGHT = 0.3
 
 
 class VidExRetriever:
     """
-    Does the heavy lifting of talking to Qdrant.
-    There's a mock mode in here if you want to test without spinning up a live cluster.
+    Interface for executing vector database queries and fusing multimodal results.
+    Includes an optional mock mode for isolated testing.
     """
 
     def __init__(self, collection_name: str = QDRANT_COLLECTION_NAME, use_mock: bool = False):
@@ -38,7 +35,7 @@ class VidExRetriever:
             print("[Retrieval] Running in mock mode — no Qdrant connection.")
 
     def _build_filter(self, video_id: str | None) -> models.Filter | None:
-        """Limits the search to a specific video so we don't pull answers from random lectures."""
+        """Generates a Qdrant filter to isolate searches to a specific video identifier."""
         if video_id is None:
             return None
         return models.Filter(
@@ -47,7 +44,7 @@ class VidExRetriever:
 
     def _search_vector(self, vector_name: str, query_vector: list[float],
                        limit: int, video_id: str | None) -> list:
-        """Helper to run a basic search against one specific index in Qdrant."""
+        """Executes a similarity search against a targeted vector index."""
         return self.client.search(
             collection_name=self.collection_name,
             query_vector=(vector_name, query_vector),
@@ -59,9 +56,9 @@ class VidExRetriever:
     def search_multimodal_context(self, user_query: str, limit: int = 3,
                                   video_id: str | None = None) -> list[dict]:
         """
-        The magic dual-search method. It hits both text and image indices with the exact
-        same vector, then fuses them by timestamp. If the same chunk pops up in both, 
-        we merge them so we don't feed the LLM duplicate info.
+        Executes parallel searches across textual and visual vector spaces.
+        Results are deduplicated via timestamp clustering to prevent redundant 
+        context from consuming LLM token limits.
         """
         if self.use_mock:
             print(f"[Retrieval] Mock search for: '{user_query[:50]}...'")
@@ -88,13 +85,12 @@ class VidExRetriever:
                 },
             ]
 
-        # Since SigLIP handles both text and images in the same 768-dim space,
-        # we only need to encode the query once.
-        # Importing here inside the function so PyTorch doesn't slow down the whole app on boot.
+        # Generate a unified embedding query. Both indices share the same vector space.
+        # Lazy-load the embedding manager to optimize application startup time.
         from modules.embeddings import embedding_manager
         query_vector = embedding_manager.get_text_embedding(user_query)
 
-        # Grab extra hits from each index because fusion will likely merge a few of them
+        # Fetch extra candidates since timestamp fusion will deduplicate results
         fetch_k = max(limit * 2, 6)
         text_hits = self._search_vector("text_vector", query_vector, fetch_k, video_id)
         visual_hits = self._search_vector("image_vector", query_vector, fetch_k, video_id)

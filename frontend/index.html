@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+    <title>VidEx | V2.0 Intelligence</title>
+    <link rel="icon" type="image/png" href="/assets/logo_icon.png">
+
+    <!-- Tailwind CSS with Forms and Container Queries -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+
+    <!-- Typography & Icons -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Geist:wght@400;500;700&display=swap"
+        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+        rel="stylesheet">
+
+    <!-- Designer Config for Tailwind (Lumina Dark Theme Integration) -->
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary-fixed-dim": "#60a5fa",
+                        "on-primary-container": "#eff6ff",
+                        "secondary-fixed": "#fecaca",
+                        "outline": "#94a3b8",
+                        "on-secondary": "#450a0a",
+                        "on-surface-variant": "#cbd5e1",
+                        "error": "#f87171",
+                        "tertiary-container": "#7f1d1d",
+                        "primary-fixed": "#bfdbfe",
+                        "on-secondary-fixed-variant": "#991b1b",
+                        "secondary-container": "#ef4444",
+                        "surface-container-low": "#1e293b",
+                        "surface-tint": "#3b82f6",
+                        "tertiary-fixed": "#fecaca",
+                        "surface-container-lowest": "#0f172a",
+                        "on-secondary-fixed": "#450a0a",
+                        "on-primary-fixed": "#1e3a8a",
+                        "secondary": "#f87171",
+                        "inverse-surface": "#e2e8f0",
+                        "on-surface": "#f1f5f9",
+                        "primary-container": "#1d4ed8",
+                        "on-tertiary-fixed-variant": "#7f1d1d",
+                        "inverse-primary": "#bfdbfe",
+                        "surface-container-highest": "#334155",
+                        "surface-container": "#1e293b",
+                        "on-error-container": "#fef2f2",
+                        "tertiary": "#fca5a5",
+                        "on-tertiary-container": "#fef2f2",
+                        "error-container": "#991b1b",
+                        "outline-variant": "#475569",
+                        "on-primary-fixed-variant": "#1e40af",
+                        "tertiary-fixed-dim": "#f87171",
+                        "on-error": "#450a0a",
+                        "surface-container-high": "#334155",
+                        "inverse-on-surface": "#1e293b",
+                        "surface-variant": "#334155",
+                        "surface-dim": "#0f172a",
+                        "surface-bright": "#475569",
+                        "surface": "#0f172a",
+                        "secondary-fixed-dim": "#f87171",
+                        "primary": "#3b82f6",
+                        "on-tertiary": "#450a0a",
+                        "on-secondary-container": "#fef2f2",
+                        "on-primary": "#1e3a8a",
+                        "background": "#0f172a",
+                        "on-background": "#f8fafc",
+                        "on-tertiary-fixed": "#450a0a"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    spacing: {
+                        "stack-md": "16px",
+                        "stack-sm": "8px",
+                        "container-padding": "24px",
+                        "unit": "4px",
+                        "stack-lg": "32px",
+                        "gutter": "16px"
+                    },
+                    fontFamily: {
+                        "headline-md": ["Inter"],
+                        "headline-lg-mobile": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "label-mono": ["Geist"],
+                        "code-sm": ["Geist"],
+                        "headline-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "body-lg": ["Inter"]
+                    },
+                    fontSize: {
+                        "headline-md": ["24px", { "lineHeight": "1.3", "fontWeight": "600" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "1.2", "fontWeight": "600" }],
+                        "display-lg": ["48px", { "lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "label-mono": ["13px", { "lineHeight": "1.2", "letterSpacing": "0.02em", "fontWeight": "500" }],
+                        "code-sm": ["12px", { "lineHeight": "1.4", "fontWeight": "400" }],
+                        "headline-lg": ["32px", { "lineHeight": "1.2", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "body-sm": ["14px", { "lineHeight": "1.5", "fontWeight": "400" }],
+                        "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }]
+                    }
+                }
+            }
+        };
+    </script>
+
+    <!-- Custom Designer Utilities -->
+    <style>
+        body {
+            background-color: #0b1326;
+            color: #dae2fd;
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(51, 65, 85, 0.5);
+        }
+
+        .glass-card {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(51, 65, 85, 0.5);
+        }
+
+        .pro-glow {
+            box-shadow: 0 0 25px rgba(37, 99, 235, 0.15);
+        }
+
+        .glow-button:hover {
+            box-shadow: 0px 0px 15px rgba(37, 99, 235, 0.4);
+        }
+
+        .input-glow:focus-within {
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.4);
+            border-color: #2563eb;
+        }
+
+        .glow-active {
+            box-shadow: 0 0 15px rgba(37, 99, 235, 0.3);
+        }
+
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+
+        .ripple {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            transform: scale(0);
+            animation: ripple-animation 0.6s linear;
+            pointer-events: none;
+        }
+
+        @keyframes ripple-animation {
+            to {
+                transform: scale(4);
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+
+<body class="min-h-screen relative bg-background select-none">
+
+    <!-- Authentication and Full-Viewport Container -->
+    <div id="auth-container" class="hidden min-h-screen w-full flex items-center justify-center relative"></div>
+
+    <!-- Main Application Shell: Contains Navigation and Primary Content Layout -->
+    <div id="app-shell" class="hidden h-screen w-full flex overflow-hidden">
+        <!-- Primary Sidebar Navigation Drawer -->
+        <aside id="sidebar"
+            class="flex flex-col h-full py-stack-md px-stack-sm bg-surface-dim border-r border-outline-variant w-64 shrink-0 transition-all duration-300">
+            <div class="px-4 mb-stack-lg">
+                <div class="flex flex-col gap-0">
+                    <img src="/assets/logo.png" alt="VidEx Logo" class="w-48 h-auto object-contain object-left -ml-6 -mt-8">
+                    <p class="font-label-mono text-[12px] text-on-surface-variant uppercase tracking-[0.15em] -mt-16 relative z-10">V2.0
+                        Intelligence</p>
+                </div>
+            </div>
+
+            <!-- Navigation Links Container -->
+            <nav class="flex-1 space-y-2 px-2" id="sidebar-nav">
+                <!-- Hydrated dynamically by application router -->
+            </nav>
+
+            <!-- Utility and Account Navigation Actions -->
+            <div class="mt-auto border-t border-outline-variant pt-stack-md px-2 space-y-2">
+                <!-- Subscription Tier Indicator -->
+                <div id="sidebar-plan-card"
+                    class="mb-4 p-4 bg-primary-container/10 border border-primary/20 rounded-lg">
+                    <p class="font-label-mono text-[10px] text-primary uppercase tracking-widest mb-1"
+                        id="sidebar-plan-name">Free Plan</p>
+                    <p class="font-body-sm text-[12px] text-on-surface mb-3" id="sidebar-plan-desc">Unlock 10 projects &
+                        4K ingestion.</p>
+                    <button onclick="navigate('pricing')"
+                        class="w-full bg-primary text-on-primary py-2 rounded font-bold text-body-sm hover:bg-white hover:text-primary transition-all">Upgrade
+                        Now</button>
+                </div>
+
+                <a onclick="showHelp(); return false;"
+                    class="flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-all duration-200 cursor-pointer rounded-lg">
+                    <span class="material-symbols-outlined">help</span>
+                    <span class="font-body-sm text-body-sm">Help</span>
+                </a>
+                <a onclick="handleLogout(); return false;"
+                    class="flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-all duration-200 cursor-pointer rounded-lg">
+                    <span class="material-symbols-outlined">logout</span>
+                    <span class="font-body-sm text-body-sm">Logout</span>
+                </a>
+            </div>
+        </aside>
+
+        <!-- Primary Content Viewport -->
+        <div class="flex-grow flex flex-col overflow-hidden relative">
+            <!-- Application Header Navigation Bar -->
+            <header
+                class="flex justify-between items-center w-full px-container-padding h-16 bg-surface-container border-b border-outline-variant shrink-0">
+                <div class="flex items-center gap-4">
+                    <button id="sidebar-toggle" onclick="document.getElementById('sidebar').classList.toggle('hidden')"
+                        class="material-symbols-outlined text-on-surface-variant hover:bg-surface-container-high transition-colors p-2 rounded-full cursor-pointer">
+                        menu
+                    </button>
+                    <div class="relative flex items-center">
+                        <span class="material-symbols-outlined absolute left-3 text-outline">search</span>
+                        <input id="global-search"
+                            class="bg-surface-container-lowest border border-outline-variant rounded-full pl-10 pr-4 py-1.5 w-64 focus:ring-2 focus:ring-primary focus:border-transparent outline-none font-body-sm text-body-sm text-on-surface"
+                            placeholder="Search tasks..." type="text">
+                    </div>
+                    <div
+                        class="flex items-center gap-2 px-3 py-1.5 bg-surface-container-lowest border border-outline-variant rounded-full">
+                        <span class="material-symbols-outlined text-primary text-[18px]">folder</span>
+                        <span id="projects-counter" class="font-label-mono text-label-mono text-on-surface">0/5
+                            Projects</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-6">
+                    <div class="flex items-center gap-4">
+                        <button
+                            class="material-symbols-outlined text-on-surface-variant hover:bg-surface-container-high transition-colors p-2 rounded-full relative">
+                            notifications
+                            <span class="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full"></span>
+                        </button>
+                        <button
+                            class="material-symbols-outlined text-on-surface-variant hover:bg-surface-container-high transition-colors p-2 rounded-full">settings</button>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span id="user-role-badge"
+                            class="px-2 py-0.5 bg-primary-container/20 border border-primary/30 text-primary text-[10px] font-bold uppercase tracking-widest rounded-full">Free</span>
+                        <div class="h-8 w-8 rounded-full overflow-hidden border border-primary">
+                            <img id="avatar-img" class="w-full h-full object-cover"
+                                src="https://lh3.googleusercontent.com/aida-public/AB6AXuAgh8OeWkNEKFuD9y-b6V02ZypIDcRZHqgDTBs077ZHy-FbJ3BMJfSsWPkqOc6rJAzp8AVbj2yf1tBwZujmsHJ9HmIkJP-bCf4DTSPsrI4flhuGxxfxpxAygXfWZvHHK72SSlN6e13XnWbENpSX4i-9yHgWrYzq1KDS38ar1jAtRYGqXvZ1z8p5_7Ve8dtXS9pz8q1Zr3XL8c9qlSJDDlELCoxx1DzIVTMEC86cQKBrwLfyFPlTb80"
+                                alt="Avatar">
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dynamically Loaded Page Content -->
+            <main id="page-content" class="flex-1 overflow-hidden relative bg-background"></main>
+        </div>
+    </div>
+
+    <!-- Modals Backdrops & Dialogs -->
+    <div id="modal-container"></div>
+
+    <!-- Component scripts -->
+    <script src="pages/login.js"></script>
+    <script src="pages/signup.js"></script>
+    <script src="pages/pricing.js"></script>
+    <script src="pages/dashboard.js"></script>
+    <script src="pages/chat.js"></script>
+
+    <!-- Main App Router -->
+    <script src="app.js"></script>
+</body>
+
+</html>

@@ -1,13 +1,9 @@
 """
-LLM handler for VidEx — wraps Gemini.
+LLM Integration and Generation Engine.
 
-Takes the video chunks we found and the user's question, builds a solid prompt, 
-and gets Gemini to answer acting like the professor from the video.
-
-It handles:
-  - Normal text questions ("what did the prof say?")
-  - Visual math questions ("solve the equation on the board")
-  - Screenshot questions ("explain what I am looking at right now")
+Constructs multimodal prompts utilizing retrieved video context and 
+interfaces with the Gemini API to generate contextual answers.
+Supports text queries, visual context analysis, and chat history rolling summarization.
 """
 
 import os
@@ -23,8 +19,7 @@ from config import GEMINI_API_KEY, GEMINI_MODEL, CHAT_HISTORY_TOKEN_LIMIT
 from schemas import RetrievalResult, LLMAnswer
 
 
-# Quick cache so we don't spam the API with the exact same question twice.
-# Saves money and makes it way faster.
+# In-memory LRU cache to reduce latency and API consumption for identical queries.
 CACHE_MAXSIZE = 128
 
 
@@ -50,8 +45,7 @@ SYSTEM_PROMPT = (
 
 class VidExGenerator:
     """
-    The core engine. Builds the prompt, talks to Gemini, and handles 
-    retries if the API decides to randomly fail.
+    Manages prompt construction, Gemini API execution, and transient failure retries.
     """
 
     def __init__(self):
@@ -62,14 +56,14 @@ class VidExGenerator:
         self.client = genai.Client(api_key=GEMINI_API_KEY)
         self.model_id = GEMINI_MODEL
 
-        # Response cache: avoids hitting the API for identical queries
+        # Initialize response cache for identical contextual queries
         self._cache: dict[str, str] = {}
         self._cache_order: list[str] = []
 
         print(f"[LLM] Gemini handler ready — model: {self.model_id}")
 
     def _make_cache_key(self, query: str, contexts: list, frame_path: str | None, chat_history: list[dict] | None = None, rolling_summary: str = "") -> str:
-        """Create a unique hash for the question + context so we can cache it."""
+        """Generates a unique SHA-256 hash identifying the query and its full context."""
         raw = query + "||"
         for item in contexts:
             text = getattr(item, "text", str(item))
@@ -100,7 +94,7 @@ class VidExGenerator:
             self._cache_order.remove(key)
         self._cache[key] = value
         self._cache_order.append(key)
-        # kick out the oldest cache entry if we're storing too many
+        # Evict the oldest entry to maintain max size
         if len(self._cache_order) > CACHE_MAXSIZE:
             oldest = self._cache_order.pop(0)
             del self._cache[oldest]
@@ -111,7 +105,7 @@ class VidExGenerator:
         reraise=True,
     )
     def _call_gemini(self, contents: list, system_instruction: str, model_id: str | None = None) -> str:
-        """Actually hits the Gemini API. Auto-retries a few times if it fails."""
+        """Executes the generate_content API call with exponential backoff."""
         target_model = model_id if model_id else self.model_id
         response = self.client.models.generate_content(
             model=target_model,
@@ -128,13 +122,8 @@ class VidExGenerator:
                         chat_history: list[dict] | None = None,
                         rolling_summary: str = "") -> tuple[str, str | None]:
         """
-        Builds the prompt and asks Gemini. Returns (answer, new_summary)
-        
-        It knows how to deal with:
-          1. Just text (no images)
-          2. Slide frames retrieved from the DB
-          3. A screenshot the user just took
-          4. Token-capped conversational context and rolling summaries
+        Constructs a multimodal prompt utilizing retrieved contexts and current user state.
+        Returns a tuple of (generated_answer, updated_rolling_summary).
         """
         # 1. Budgeting Logic
         recent_history = []

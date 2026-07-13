@@ -1,7 +1,8 @@
 """
-Ingestion module — downloads videos from YouTube or Google Drive, or handles direct uploads.
-Includes some basic safety checks so we don't accidentally download massive 10-hour videos
-or follow sketchy redirect links.
+Video Ingestion and Validation Module.
+
+Handles downloading media assets from external sources (YouTube, Google Drive) 
+and processing direct uploads, including URL sanitization and payload size validation.
 """
 
 import os
@@ -16,13 +17,12 @@ import gdown
 from config import TEMP_ASSETS_DIR, MAX_VIDEO_DURATION_SECONDS
 
 
-# Try different YouTube clients in case one gets blocked or rate-limited.
+# Fallback client configurations to mitigate potential rate limiting.
 YOUTUBE_PLAYER_CLIENTS = ["android", "ios", "web_embedded"]
 
 ALLOWED_DOMAINS = {"youtube.com", "youtu.be", "drive.google.com"}
 
-# Characters that have absolutely no business being in a video URL.
-# Rejecting these just to be safe.
+# Restricted character set for URL validation.
 DANGEROUS_CHARS = set(";|`$<>\n\r")
 
 MAX_URL_LENGTH = 2000
@@ -34,7 +34,7 @@ def _normalize_domain(netloc: str) -> str:
 
 def sanitize_url(url: str) -> None:
     """
-    Blocks obvious junk URLs before we even try to hit the network.
+    Validates URLs syntactically before network execution.
     """
     if not url or not isinstance(url, str):
         raise ValueError("URL must be a non-empty string.")
@@ -58,7 +58,7 @@ def sanitize_url(url: str) -> None:
 
 
 def detect_source(url: str) -> str:
-    """Figures out if the URL is from YouTube or Google Drive."""
+    """Determines the target platform from a given URL."""
     if "youtube.com" in url or "youtu.be" in url:
         return "youtube"
     elif "drive.google.com" in url:
@@ -69,13 +69,16 @@ def detect_source(url: str) -> str:
 
 def save_uploaded_file(file_bytes: bytes, original_filename: str, output_dir: str = TEMP_ASSETS_DIR) -> tuple[str, str]:
     """
-    Saves an uploaded video file to our temp folder and gives it a UUID
-    so we can track it.
+    Persists an uploaded byte stream to local storage and generates a sanitized ID.
     """
     os.makedirs(output_dir, exist_ok=True)
-    video_id = uuid.uuid4().hex
-    ext = os.path.splitext(original_filename)[1] or ".mp4"
-    output_path = os.path.join(output_dir, f"{video_id}{ext}")
+    
+    # Sanitize the filename for consistent filesystem behavior
+    base_name = os.path.splitext(original_filename)[0]
+    clean_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', base_name).strip('_')
+    video_id = clean_name or uuid.uuid4().hex[:8]
+    
+    output_path = os.path.join(output_dir, f"{video_id}.mp4")
     with open(output_path, "wb") as f:
         f.write(file_bytes)
     return output_path, video_id
@@ -83,9 +86,8 @@ def save_uploaded_file(file_bytes: bytes, original_filename: str, output_dir: st
 
 def _extract_gdrive_file_id(url: str) -> str | None:
     """
-    Pulls the actual file ID out of a Google Drive link.
-    Helps us detect bad links early and gives us a stable ID so we don't 
-    end up re-ingesting the exact same video multiple times.
+    Extracts the unique file identifier from a Google Drive URL.
+    Used for caching and request deduplication.
     """
     match = re.search(r"/d/([a-zA-Z0-9_-]+)", url) or re.search(r"id=([a-zA-Z0-9_-]+)", url)
     return match.group(1) if match else None
@@ -93,9 +95,8 @@ def _extract_gdrive_file_id(url: str) -> str | None:
 
 def _is_google_drive_public(url: str) -> bool:
     """
-    Checks if a Google Drive link is public before we try to download it.
-    If it redirects to a Google login page, we fail early instead of downloading
-    the login HTML page and getting confused later.
+    Verifies public accessibility of a Google Drive asset.
+    Fails fast if the URL redirects to an authentication wall.
     """
     try:
         response = requests.get(url, allow_redirects=True, stream=True, timeout=10)
@@ -103,8 +104,7 @@ def _is_google_drive_public(url: str) -> bool:
         response.close()
         return "accounts.google.com" not in final_domain
     except requests.RequestException:
-        # If the network just blips, don't block the download attempt.
-        # Let gdown figure it out.
+        # Fail open on transient network errors during validation.
         return True
 
 
@@ -124,11 +124,14 @@ def check_duration(url: str, limit_seconds=MAX_VIDEO_DURATION_SECONDS) -> dict:
 
 def download_youtube(url: str) -> tuple[str, str]:
     """
-    YouTube ingestion — best-effort. Might fail if the video is region locked,
-    members-only, or if YouTube decides we look like a bot.
+    Retrieves video assets from YouTube.
+    Subject to standard platform restrictions (region locks, authentication).
     """
     info = check_duration(url)
-    video_id = info.get("id") or str(uuid.uuid4())
+    
+    # Use the video title as the ID, or fallback to the YouTube ID
+    raw_id = info.get("title") or info.get("id") or str(uuid.uuid4())
+    video_id = re.sub(r'[^a-zA-Z0-9_\-]', '_', raw_id).strip('_')
 
     output_path = os.path.join(TEMP_ASSETS_DIR, f"{video_id}.mp4")
     ydl_opts = {
@@ -147,7 +150,7 @@ def download_youtube(url: str) -> tuple[str, str]:
 
 
 def download_gdrive(url: str, limit_seconds=MAX_VIDEO_DURATION_SECONDS) -> tuple[str, str]:
-    """Downloads from Google Drive and runs some safety checks."""
+    """Retrieves and validates video assets from Google Drive."""
     file_id = _extract_gdrive_file_id(url)
     if file_id is None:
         raise ValueError(
@@ -162,24 +165,32 @@ def download_gdrive(url: str, limit_seconds=MAX_VIDEO_DURATION_SECONDS) -> tuple
             "sharing to 'Anyone with the link' and try again."
         )
 
-    video_id = file_id  # deterministic: same file always maps to the same ID
-    output_path = os.path.join(TEMP_ASSETS_DIR, f"{video_id}.mp4")
+    import tempfile
+    import shutil
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        original_cwd = os.getcwd()
+        os.chdir(temp_dir)
+        try:
+            # Allow gdown to resolve the final filename
+            result = gdown.download(url, None, quiet=False, fuzzy=True)
+            if result is None or not os.path.exists(result):
+                raise Exception("Failed to download from G-Drive. The link may be private or invalid.")
+            
+            # Extract the resolved filename
+            filename = os.path.basename(result)
+            base_name = os.path.splitext(filename)[0]
+            clean_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', base_name).strip('_')
+            video_id = clean_name or file_id
+            
+            os.chdir(original_cwd)
+            output_path = os.path.join(TEMP_ASSETS_DIR, f"{video_id}.mp4")
+            shutil.move(os.path.join(temp_dir, filename), output_path)
+        except Exception as e:
+            os.chdir(original_cwd)
+            raise Exception(f"G-Drive Error: {e}")
 
-    try:
-        # fuzzy=True handles Drive's virus-scan warning page for big files
-        # so we don't accidentally save the HTML warning as our video file.
-        result = gdown.download(url, output_path, quiet=False, fuzzy=True)
-    except Exception as e:
-        raise Exception(f"G-Drive Error: {e}")
-
-    if result is None or not os.path.exists(output_path):
-        raise Exception(
-            "Failed to download from G-Drive. The link may be private "
-            "(requires OAuth) or invalid."
-        )
-
-    # Sanity check: if the file is tiny, it's probably the Google Drive warning page,
-    # not the actual video.
+    # Validate the file size to ensure we did not download an HTML warning page.
     if os.path.getsize(output_path) < 100_000:
         os.remove(output_path)
         raise Exception(
@@ -201,7 +212,7 @@ def download_gdrive(url: str, limit_seconds=MAX_VIDEO_DURATION_SECONDS) -> tuple
 
 
 def download_video(url: str) -> tuple[str, str]:
-    """Main routing logic. Figures out what kind of link it is and downloads it."""
+    """Primary ingestion entrypoint. Routes URL to the appropriate download handler."""
     sanitize_url(url)
 
     os.makedirs(TEMP_ASSETS_DIR, exist_ok=True)

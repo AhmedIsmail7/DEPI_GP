@@ -1,10 +1,8 @@
 """
-Manages our Qdrant database. 
+Qdrant Vector Database Interface.
 
-It handles creating the collection and makes sure we don't accidentally try to upload 
-data that doesn't match our current embedding dimensions (we learned that lesson the hard way).
-Also includes some retry logic in case the internet blips during an upload so we don't 
-waste a whole GPU run.
+Manages collection initialization, embedding dimension validation, and 
+implements robust upsert mechanisms with exponential backoff and retry logic.
 """
 
 import time
@@ -22,7 +20,7 @@ from schemas import TranscriptChunk, VisualChunk, QdrantPoint, TEXT_EMBEDDING_DI
 
 @dataclass
 class IndexingResult:
-    """Just a quick summary of how the upload went."""
+    """Summarizes the outcome of a vector indexing operation."""
     points_attempted: int = 0
     points_uploaded: int = 0
     skipped_no_visual_match: int = 0
@@ -36,8 +34,8 @@ class IndexingResult:
 
 class DimensionMismatchError(Exception):
     """
-    Thrown when the database expects one vector size but we give it another.
-    Usually happens if you change models but forget to delete the old collection.
+    Raised when payload embedding dimensions do not match the expected vector size
+    configured in the target Qdrant collection.
     """
     pass
 
@@ -69,8 +67,8 @@ class QdrantManager:
 
     def _validate_dimensions(self):
         """
-        Double-checks that the database vector sizes match what we're actually sending.
-        Prevents silent upload failures.
+        Validates that the existing collection configuration matches the current 
+        model embedding dimensions to prevent payload rejection during upsert.
         """
         info = self.client.get_collection(self.collection_name)
         vectors_config = info.config.params.vectors
@@ -90,7 +88,7 @@ class QdrantManager:
             )
 
     def _upsert_with_retry(self, points: list[models.PointStruct]) -> int:
-        """Try uploading, and if it fails, wait a bit and try again."""
+        """Executes a database upsert operation with exponential backoff retries."""
         retries_used = 0
         for attempt in range(UPSERT_MAX_RETRIES):
             try:

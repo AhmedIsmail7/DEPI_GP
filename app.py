@@ -17,9 +17,9 @@ from modules.database import db_manager
 from modules.retrieval import retriever
 from modules.llm_handler import llm_handler
 
-MODAL_UPLOAD_URL = "https://ahmedismail7--videx-ingestion-upload.modal.run"
-MODAL_TRIGGER_URL = "https://ahmedismail7--videx-ingestion-trigger.modal.run"
-MODAL_STATUS_URL = "https://ahmedismail7--videx-ingestion-status.modal.run"
+MODAL_UPLOAD_URL = "https://dark0danger--videx-ingestion-upload.modal.run"
+MODAL_TRIGGER_URL = "https://dark0danger--videx-ingestion-trigger.modal.run"
+MODAL_STATUS_URL = "https://dark0danger--videx-ingestion-status.modal.run"
 
 POLL_INTERVAL_SECONDS = 4
 POLL_TIMEOUT_SECONDS = 900  # 15 min ceiling, matches Modal function timeout

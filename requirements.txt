@@ -1,0 +1,24 @@
+# Local dev uses CPU-only PyTorch (avoids fbgemm.dll errors on Windows).
+# Modal cloud uses the full CUDA build — see modal_app.py.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
+openai-whisper==20250625
+transformers==4.44.0
+yt-dlp>=2026.06.09
+gdown==5.2.0
+# Using headless opencv since processing will run in a Modal container (no UI/X11)
+opencv-python-headless==4.10.0.84
+qdrant-client==1.10.1
+streamlit==1.37.0
+pillow==10.4.0
+requests==2.32.3
+pydub==0.25.1
+python-dotenv>=1.0.1
+numpy>=1.26.0,<2.0.0
+google-genai>=2.10.0
+pydantic>=2.13.4
+modal>=1.5.1
+fastapi[standard]>=0.139.0
+sentencepiece>=0.2.1
+python-multipart
+tenacity

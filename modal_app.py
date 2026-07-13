@@ -1,13 +1,10 @@
 """
-VidEx ingestion pipeline on Modal.
-Replaces the entire Kaggle CLI/Secrets/dataset-sync workflow — this
-deploys as a real HTTP endpoint with working secret injection, callable
-directly from app.py or a production frontend.
+VidEx Ingestion Pipeline on Modal.
 
-Ingestion paths:
-  - /upload  : direct file upload (primary, fully reliable)
-  - /trigger : URL-based (Google Drive reliable, YouTube best-effort —
-               subject to platform bot-detection/region/membership locks)
+Deploys HTTP endpoints for remote video ingestion and embedding generation.
+Supports two modes:
+  - /upload  : Direct file upload ingestion.
+  - /trigger : Remote URL ingestion via direct download.
 """
 
 import modal
@@ -16,10 +13,8 @@ from fastapi import UploadFile, File
 
 app = modal.App("videx-ingestion")
 
-# Shared persistent storage between the lightweight upload endpoint and
-# the GPU processing function — Modal Functions don't share a local
-# filesystem by default, so a Volume is how the uploaded bytes cross
-# between them.
+# Persistent storage volume to mount uploaded files across the HTTP endpoint 
+# and the asynchronous GPU processing instances.
 uploads_volume = modal.Volume.from_name("videx-uploads", create_if_missing=True)
 
 image = (
@@ -32,6 +27,7 @@ image = (
         "pillow==10.4.0", "pydub==0.25.1", "numpy>=1.26.0,<2.0.0",
         "fastapi[standard]", "python-multipart",
         "sentencepiece",  # required by SiglipTokenizer
+        "tenacity",       # required by llm_handler retry logic
     )
     .add_local_python_source("modules", "config", "schemas")
 )
@@ -45,7 +41,7 @@ image = (
     timeout=900,
 )
 def run_ingestion_from_path(video_path: str, video_id: str) -> str:
-    """Processes an already-saved file — no download step at all."""
+    """Executes the ingestion pipeline on a locally accessible file path."""
     from config import validate_env
     from modules.transcribe import transcriber_engine
     from modules.vision import vision_engine
@@ -73,9 +69,7 @@ def run_ingestion_from_path(video_path: str, video_id: str) -> str:
     timeout=900,
 )
 def run_ingestion_from_url(video_url: str) -> str:
-    """Google Drive: fully reliable. YouTube: best-effort — may fail
-    due to platform bot-checks or region/membership restrictions.
-    Uses player_client spoofing only (see ingest.py), no cookies."""
+    """Executes the ingestion pipeline by downloading the target URL."""
     from config import validate_env
     from modules.ingest import download_video
     from modules.transcribe import transcriber_engine
