@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Union
 
 import torch
+# Limit PyTorch to 1 thread to prevent severe CPU thrashing on Railway's shared vCPUs
+torch.set_num_threads(1)
 import numpy as np
 from PIL import Image
 from transformers import AutoProcessor, SiglipModel
