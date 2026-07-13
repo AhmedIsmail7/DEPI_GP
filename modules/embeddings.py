@@ -58,6 +58,13 @@ class EmbeddingManager:
 
         self._initialized = True
 
+        # Eagerly load model + processor at startup so the first query
+        # doesn't pay the cold-start penalty.
+        print("[Embeddings] Preloading SigLIP model and processor...")
+        _ = self.model
+        _ = self.processor
+        print("[Embeddings] SigLIP ready.")
+
     @property
     def model(self):
         if self._model is None:

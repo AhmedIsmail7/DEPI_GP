@@ -6,6 +6,8 @@ Results are deduplicated and merged by timestamp to provide the LLM with
 a unified contextual context window.
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from qdrant_client import QdrantClient, models
 
 from config import QDRANT_URL, QDRANT_API_KEY, QDRANT_COLLECTION_NAME, DEFAULT_TOP_K
@@ -92,8 +94,13 @@ class VidExRetriever:
 
         # Fetch extra candidates since timestamp fusion will deduplicate results
         fetch_k = max(limit * 2, 6)
-        text_hits = self._search_vector("text_vector", query_vector, fetch_k, video_id)
-        visual_hits = self._search_vector("image_vector", query_vector, fetch_k, video_id)
+
+        # Run both vector searches in parallel to halve network latency
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            text_future = pool.submit(self._search_vector, "text_vector", query_vector, fetch_k, video_id)
+            visual_future = pool.submit(self._search_vector, "image_vector", query_vector, fetch_k, video_id)
+            text_hits = text_future.result()
+            visual_hits = visual_future.result()
 
         # --- Fusion time (Reciprocal Rank Fusion) ---
         candidates = {} # timestamp -> payload
