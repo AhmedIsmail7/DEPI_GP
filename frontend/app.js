@@ -10,7 +10,7 @@ const AUTH_PAGES = ['login', 'signup'];
 let currentPage = '';
 
 // Global session state
-window.API_BASE_URL = "https://YOUR_HF_SPACE_URL.hf.space"; // REPLACE THIS with your Hugging Face space URL
+window.API_BASE_URL = "https://videx-production-1994.up.railway.app";
 window.currentUser = JSON.parse(localStorage.getItem('currentUser')) || null;
 window.activeVideoId = null;
 
