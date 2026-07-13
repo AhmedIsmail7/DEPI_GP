@@ -26,3 +26,6 @@ htmlcov/
 # IDE and Editors
 .vscode/
 .idea/
+
+# Images showcase
+images/

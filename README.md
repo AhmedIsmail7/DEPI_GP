@@ -63,6 +63,21 @@
 
 ---
 
+## 📸 Gallery
+
+<div align="center">
+  <img src="images/Screenshot%202026-07-13%20143913.png" width="49%">
+  <img src="images/Screenshot%202026-07-13%20143938.png" width="49%">
+  <img src="images/Screenshot%202026-07-13%20143943.png" width="49%">
+  <img src="images/Screenshot%202026-07-13%20143952.png" width="49%">
+  <img src="images/Screenshot%202026-07-13%20144011.png" width="49%">
+  <img src="images/Screenshot%202026-07-13%20144046.png" width="49%">
+  <img src="images/Screenshot%202026-07-13%20144116.png" width="49%">
+  <img src="images/Screenshot%202026-07-13%20144204.png" width="49%">
+</div>
+
+---
+
 ## ✨ Features
 
 ### 🎯 Core Capabilities
