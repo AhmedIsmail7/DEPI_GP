@@ -332,7 +332,7 @@ async function handleChatSubmit(event) {
         console.error("Chat Query Error:", err);
         const loader = document.getElementById(loadingMsgId);
         if (loader) loader.remove();
-        appendMessage("assistant", "Engine connection error. Check if backend FastAPI is running on port 8002.");
+        appendMessage("assistant", "Engine connection error. Unable to reach the API backend. Please check your network connection or backend status.");
     }
 }
 
