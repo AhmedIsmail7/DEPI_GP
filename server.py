@@ -12,6 +12,7 @@ import json
 import os
 import hashlib
 import tempfile
+import time
 
 import requests as http_requests  # renamed to avoid clash with fastapi Request
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
@@ -257,19 +258,28 @@ async def chat(
             f.write(await frame.read())
 
     try:
+        t_total = time.perf_counter()
+
         # 1. Retrieve matching chunks
+        t0 = time.perf_counter()
         results = retriever.retrieve(query, top_k=3, video_id=video_id)
+        t_retrieve = time.perf_counter() - t0
+        print(f"[TIMING] Retrieval: {t_retrieve:.2f}s")
 
         if not results:
             return {"answer": "I couldn't find any relevant content for this question in the video.", "sources": []}
 
         # 2. Generate LLM answer
+        t1 = time.perf_counter()
         answer = llm_handler.generate_response(
             query,
             results,
             video_id=video_id,
             current_frame_path=frame_path,
         )
+        t_llm = time.perf_counter() - t1
+        print(f"[TIMING] LLM generation: {t_llm:.2f}s")
+        print(f"[TIMING] Total chat: {time.perf_counter() - t_total:.2f}s")
 
         sources = sorted(set(answer.source_timestamps)) if answer.source_timestamps else []
         return {"answer": answer.answer, "sources": sources}

@@ -7,6 +7,7 @@ a unified contextual context window.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 from qdrant_client import QdrantClient, models
 
@@ -90,17 +91,24 @@ class VidExRetriever:
         # Generate a unified embedding query. Both indices share the same vector space.
         # Lazy-load the embedding manager to optimize application startup time.
         from modules.embeddings import embedding_manager
+        
+        t0 = time.perf_counter()
         query_vector = embedding_manager.get_text_embedding(user_query)
+        t_embed = time.perf_counter() - t0
+        print(f"[TIMING] SigLIP Embedding: {t_embed:.2f}s")
 
         # Fetch extra candidates since timestamp fusion will deduplicate results
         fetch_k = max(limit * 2, 6)
 
         # Run both vector searches in parallel to halve network latency
+        t1 = time.perf_counter()
         with ThreadPoolExecutor(max_workers=2) as pool:
             text_future = pool.submit(self._search_vector, "text_vector", query_vector, fetch_k, video_id)
             visual_future = pool.submit(self._search_vector, "image_vector", query_vector, fetch_k, video_id)
             text_hits = text_future.result()
             visual_hits = visual_future.result()
+        t_qdrant = time.perf_counter() - t1
+        print(f"[TIMING] Parallel Qdrant Searches: {t_qdrant:.2f}s")
 
         # --- Fusion time (Reciprocal Rank Fusion) ---
         candidates = {} # timestamp -> payload
