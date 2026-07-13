@@ -9,6 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://drive.google.com/file/d/17F0gAQnYbacdbQGkqcD_v05M8KUsOFca/view?usp=sharing">
+    <img src="https://img.shields.io/badge/🎬_Watch_Demo-Video_Showcase-FF0000?style=for-the-badge&logo=googledrive&logoColor=white" alt="Watch Demo">
+  </a>
+</p>
+
+<p align="center">
   <a href="#-features"><img src="https://img.shields.io/badge/Features-blue?style=for-the-badge" alt="Features"></a>
   <a href="#-tech-stack"><img src="https://img.shields.io/badge/Tech_Stack-blueviolet?style=for-the-badge" alt="Tech Stack"></a>
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Quick_Start-green?style=for-the-badge" alt="Quick Start"></a>
