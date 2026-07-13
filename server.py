@@ -24,6 +24,10 @@ from modules.database import db_manager
 from modules.retrieval import retriever
 from modules.llm_handler import llm_handler
 
+# Import embedding manager eagerly so the 50-second model load happens
+# during server startup, NOT during the user's first query.
+from modules.embeddings import embedding_manager
+
 # ---------------------------------------------------------------------------
 # Endpoint URLs for the deployed Modal application
 # ---------------------------------------------------------------------------
