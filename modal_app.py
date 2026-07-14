@@ -1,10 +1,6 @@
 """
-VidEx Ingestion Pipeline on Modal.
-
-Deploys HTTP endpoints for remote video ingestion and embedding generation.
-Supports two modes:
-  - /upload  : Direct file upload ingestion.
-  - /trigger : Remote URL ingestion via direct download.
+modal backend for video processing. 
+handles uploads and youtube downloads.
 """
 
 import modal
@@ -13,8 +9,8 @@ from fastapi import UploadFile, File
 
 app = modal.App("videx-ingestion")
 
-# Persistent storage volume to mount uploaded files across the HTTP endpoint 
-# and the asynchronous GPU processing instances.
+# volume to share files between workers
+# so the gpu can read what the web endpoint uploaded
 uploads_volume = modal.Volume.from_name("videx-uploads", create_if_missing=True)
 
 image = (
@@ -41,7 +37,7 @@ image = (
     timeout=900,
 )
 def run_ingestion_from_path(video_path: str, video_id: str) -> str:
-    """Executes the ingestion pipeline on a locally accessible file path."""
+    """run the processing pipeline on a local file"""
     from config import validate_env
     from modules.transcribe import transcriber_engine
     from modules.vision import vision_engine
@@ -69,7 +65,7 @@ def run_ingestion_from_path(video_path: str, video_id: str) -> str:
     timeout=900,
 )
 def run_ingestion_from_url(video_url: str) -> str:
-    """Executes the ingestion pipeline by downloading the target URL."""
+    """download video from url and process it"""
     from config import validate_env
     from modules.ingest import download_video
     from modules.transcribe import transcriber_engine
@@ -93,7 +89,7 @@ def run_ingestion_from_url(video_url: str) -> str:
 @app.function(image=image, volumes={"/uploads": uploads_volume})
 @modal.fastapi_endpoint(method="POST")
 async def upload(file: UploadFile = File(...)):
-    """Primary ingestion path: direct file upload, no scraping involved."""
+    """handle direct video uploads"""
     from modules.ingest import save_uploaded_file
 
     file_bytes = await file.read()
@@ -107,7 +103,7 @@ async def upload(file: UploadFile = File(...)):
 @app.function(image=image)
 @modal.fastapi_endpoint(method="POST")
 def trigger(payload: dict):
-    """Secondary path: Google Drive (reliable) or YouTube (best-effort)."""
+    """handle youtube and drive links"""
     call = run_ingestion_from_url.spawn(payload["video_url"])
     return {"call_id": call.object_id, "status": "started"}
 

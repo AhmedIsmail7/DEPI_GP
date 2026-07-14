@@ -1,14 +1,7 @@
 """
-Unified embedding module — SigLIP encodes both text and images into the
-SAME 768-dim space, unlike the previous MiniLM (text) + CLIP (image) setup
-where the two embedding spaces were unrelated and only combined via a
-weighted-average heuristic in retrieval.py. With a shared space, a single
-query embedding can be meaningfully compared against both text and image
-vectors directly.
-
-Includes disk-based caching by content hash, so re-processing the same
-text/frame (e.g. across retries) doesn't recompute an embedding that's
-already been generated.
+model for embeddings. 
+we use siglip so text and images are in the same space.
+also has cache so we don't redo work.
 """
 
 import os
@@ -19,8 +12,6 @@ from pathlib import Path
 from typing import Union
 
 import torch
-# Limit PyTorch to 1 thread to prevent severe CPU thrashing on Railway's shared vCPUs
-torch.set_num_threads(1)
 import numpy as np
 from PIL import Image
 from transformers import AutoProcessor, SiglipModel
@@ -29,7 +20,7 @@ from config import SIGLIP_MODEL_NAME, TEMP_ASSETS_DIR
 
 
 class EmbeddingManager:
-    """Singleton — loads SigLIP once, reused for both text and image encoding."""
+    """only load the model once"""
 
     _instance = None
     _lock = threading.Lock()
@@ -60,8 +51,7 @@ class EmbeddingManager:
 
         self._initialized = True
 
-        # Eagerly load model + processor at startup so the first query
-        # doesn't pay the cold-start penalty.
+        # load model at startup so first question is fast
         print("[Embeddings] Preloading SigLIP model and processor...")
         _ = self.model
         _ = self.processor
@@ -96,7 +86,7 @@ class EmbeddingManager:
                 json.dump(cache, f)
 
     def flush_caches(self):
-        """Call after a batch of embeddings to persist the cache to disk."""
+        """save cache to file"""
         self._save_cache(self._text_cache, self._text_cache_path)
         self._save_cache(self._image_cache, self._image_cache_path)
 
@@ -113,7 +103,7 @@ class EmbeddingManager:
 
     @torch.inference_mode()
     def get_text_embedding(self, text: str) -> list[float]:
-        """Returns an L2-normalized 768-dim embedding, in the same space as image embeddings."""
+        """get text vector, size is 768"""
         h = self._hash_text(text)
         if h in self._text_cache:
             return self._text_cache[h]
@@ -130,7 +120,7 @@ class EmbeddingManager:
 
     @torch.inference_mode()
     def get_image_embedding(self, image: Union[Image.Image, np.ndarray]) -> list[float]:
-        """Returns an L2-normalized 768-dim embedding, in the same space as text embeddings."""
+        """get image vector, size is 768"""
         h = self._hash_image(image)
         if h in self._image_cache:
             return self._image_cache[h]

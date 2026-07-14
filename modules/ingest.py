@@ -1,8 +1,5 @@
 """
-Video Ingestion and Validation Module.
-
-Handles downloading media assets from external sources (YouTube, Google Drive) 
-and processing direct uploads, including URL sanitization and payload size validation.
+handles downloading videos from youtube and drive.
 """
 
 import os
@@ -17,12 +14,12 @@ import gdown
 from config import TEMP_ASSETS_DIR, MAX_VIDEO_DURATION_SECONDS
 
 
-# Fallback client configurations to mitigate potential rate limiting.
+# use different clients so youtube doesn't block us
 YOUTUBE_PLAYER_CLIENTS = ["android", "ios", "web_embedded"]
 
 ALLOWED_DOMAINS = {"youtube.com", "youtu.be", "drive.google.com"}
 
-# Restricted character set for URL validation.
+# bad chars in url
 DANGEROUS_CHARS = set(";|`$<>\n\r")
 
 MAX_URL_LENGTH = 2000
@@ -34,7 +31,7 @@ def _normalize_domain(netloc: str) -> str:
 
 def sanitize_url(url: str) -> None:
     """
-    Validates URLs syntactically before network execution.
+    make sure url looks okay before downloading
     """
     if not url or not isinstance(url, str):
         raise ValueError("URL must be a non-empty string.")
@@ -58,7 +55,7 @@ def sanitize_url(url: str) -> None:
 
 
 def detect_source(url: str) -> str:
-    """Determines the target platform from a given URL."""
+    """check if url is youtube or drive"""
     if "youtube.com" in url or "youtu.be" in url:
         return "youtube"
     elif "drive.google.com" in url:
@@ -69,11 +66,11 @@ def detect_source(url: str) -> str:
 
 def save_uploaded_file(file_bytes: bytes, original_filename: str, output_dir: str = TEMP_ASSETS_DIR) -> tuple[str, str]:
     """
-    Persists an uploaded byte stream to local storage and generates a sanitized ID.
+    save uploaded file to disk and make an id
     """
     os.makedirs(output_dir, exist_ok=True)
     
-    # Sanitize the filename for consistent filesystem behavior
+    # make filename safe for windows/linux
     base_name = os.path.splitext(original_filename)[0]
     clean_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', base_name).strip('_')
     video_id = clean_name or uuid.uuid4().hex[:8]
@@ -86,8 +83,7 @@ def save_uploaded_file(file_bytes: bytes, original_filename: str, output_dir: st
 
 def _extract_gdrive_file_id(url: str) -> str | None:
     """
-    Extracts the unique file identifier from a Google Drive URL.
-    Used for caching and request deduplication.
+    get the file id from gdrive url
     """
     match = re.search(r"/d/([a-zA-Z0-9_-]+)", url) or re.search(r"id=([a-zA-Z0-9_-]+)", url)
     return match.group(1) if match else None
@@ -95,8 +91,7 @@ def _extract_gdrive_file_id(url: str) -> str | None:
 
 def _is_google_drive_public(url: str) -> bool:
     """
-    Verifies public accessibility of a Google Drive asset.
-    Fails fast if the URL redirects to an authentication wall.
+    check if google drive file is public and doesn't need login
     """
     try:
         response = requests.get(url, allow_redirects=True, stream=True, timeout=10)
@@ -124,8 +119,7 @@ def check_duration(url: str, limit_seconds=MAX_VIDEO_DURATION_SECONDS) -> dict:
 
 def download_youtube(url: str) -> tuple[str, str]:
     """
-    Retrieves video assets from YouTube.
-    Subject to standard platform restrictions (region locks, authentication).
+    download from youtube
     """
     info = check_duration(url)
     
@@ -150,7 +144,7 @@ def download_youtube(url: str) -> tuple[str, str]:
 
 
 def download_gdrive(url: str, limit_seconds=MAX_VIDEO_DURATION_SECONDS) -> tuple[str, str]:
-    """Retrieves and validates video assets from Google Drive."""
+    """download from google drive"""
     file_id = _extract_gdrive_file_id(url)
     if file_id is None:
         raise ValueError(
@@ -190,7 +184,7 @@ def download_gdrive(url: str, limit_seconds=MAX_VIDEO_DURATION_SECONDS) -> tuple
             os.chdir(original_cwd)
             raise Exception(f"G-Drive Error: {e}")
 
-    # Validate the file size to ensure we did not download an HTML warning page.
+    # make sure we didn't just download a virus warning page
     if os.path.getsize(output_path) < 100_000:
         os.remove(output_path)
         raise Exception(
@@ -212,7 +206,7 @@ def download_gdrive(url: str, limit_seconds=MAX_VIDEO_DURATION_SECONDS) -> tuple
 
 
 def download_video(url: str) -> tuple[str, str]:
-    """Primary ingestion entrypoint. Routes URL to the appropriate download handler."""
+    """main function to download video. checks which site to use."""
     sanitize_url(url)
 
     os.makedirs(TEMP_ASSETS_DIR, exist_ok=True)

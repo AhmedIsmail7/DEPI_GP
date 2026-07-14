@@ -1,11 +1,8 @@
 """
-VidEx — FastAPI Application Entry Point.
+main file for the fastapi server.
+it serves the frontend and handles auth, video uploads and chat api.
 
-Mounts the frontend static files and exposes REST API endpoints 
-for authentication, video ingestion, and AI chat.
-
-Run with:
-    uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+to run: uvicorn server:app --host 0.0.0.0 --port 8000 --reload
 """
 
 import json
@@ -14,7 +11,7 @@ import hashlib
 import tempfile
 import time
 
-import requests as http_requests  # renamed to avoid clash with fastapi Request
+import requests as http_requests  # rename so it doesn't conflict with fastapi request
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,14 +22,14 @@ from modules.retrieval import retriever
 from modules.llm_handler import llm_handler
 
 # ---------------------------------------------------------------------------
-# Endpoint URLs for the deployed Modal application
+# modal app urls for backend stuff
 # ---------------------------------------------------------------------------
 MODAL_UPLOAD_URL = "https://dark0danger--videx-ingestion-upload.modal.run"
 MODAL_TRIGGER_URL = "https://dark0danger--videx-ingestion-trigger.modal.run"
 MODAL_STATUS_URL = "https://dark0danger--videx-ingestion-status.modal.run"
 
 # ---------------------------------------------------------------------------
-# Local JSON authentication storage (development/testing only)
+# simple local json for testing auth without a real db
 # ---------------------------------------------------------------------------
 USERS_FILE = os.path.join(os.path.dirname(__file__), "users.json")
 
@@ -60,7 +57,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="VidEx API")
 
-# Enable CORS for the Vercel frontend
+# Enable CORS so frontend can talk to it
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -73,7 +70,7 @@ app.add_middleware(
 os.makedirs(TEMP_ASSETS_DIR, exist_ok=True)
 app.mount("/temp_assets", StaticFiles(directory=TEMP_ASSETS_DIR), name="temp_assets")
 
-# Serve frontend static files (JS pages)
+# serve static js files for frontend
 app.mount("/pages", StaticFiles(directory=os.path.join("frontend", "pages")), name="pages")
 
 
@@ -140,7 +137,7 @@ async def list_videos():
 
 @app.delete("/api/videos/{video_id}")
 async def delete_video(video_id: str):
-    """Remove a video from the vector store and delete its local asset."""
+    """delete video from qdrant and local disk"""
     try:
         from qdrant_client import models
         db_manager.client.delete(
@@ -168,7 +165,7 @@ async def delete_video(video_id: str):
 
 @app.post("/api/ingest/url")
 async def ingest_url(request: Request):
-    """Forward a URL-based ingestion request to the Modal backend."""
+    """send youtube/drive link to modal for processing"""
     body = await request.json()
     video_url = body.get("video_url", "")
     if not video_url:
@@ -183,8 +180,7 @@ async def ingest_url(request: Request):
         resp.raise_for_status()
         data = resp.json()
         
-        # Cache Google Drive videos locally in the background
-        # to enable native playback in the frontend video player
+        # download gdrive videos in background so the player can play them natively
         from modules.ingest import detect_source, download_gdrive
         if detect_source(video_url) == "gdrive":
             import threading
@@ -197,7 +193,7 @@ async def ingest_url(request: Request):
 
 @app.post("/api/ingest/upload")
 async def ingest_upload(file: UploadFile = File(...)):
-    """Forward a direct file upload to the Modal ingestion pipeline."""
+    """send uploaded video file to modal"""
     try:
         file_bytes = await file.read()
         resp = http_requests.post(
@@ -222,7 +218,7 @@ async def ingest_upload(file: UploadFile = File(...)):
 
 @app.get("/api/ingest/status/{call_id}")
 async def ingest_status(call_id: str):
-    """Check the progress of an active Modal ingestion task."""
+    """check if video upload is done"""
     try:
         resp = http_requests.get(
             MODAL_STATUS_URL,
@@ -244,8 +240,7 @@ async def chat(
     frame: UploadFile | None = File(default=None),
 ):
     """
-    Process a user query against a video's index.
-    Retrieves context from the vector store and generates an LLM response.
+    take user question and search db, then ask gemini to answer it.
     """
     if not video_id or not query:
         raise HTTPException(status_code=400, detail="video_id and query are required.")

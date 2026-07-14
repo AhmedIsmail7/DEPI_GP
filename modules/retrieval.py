@@ -1,9 +1,7 @@
 """
-Multimodal Retrieval Module.
-
-Executes parallel searches against both text and visual vector indices in Qdrant.
-Results are deduplicated and merged by timestamp to provide the LLM with 
-a unified contextual context window.
+search engine for the app.
+it searches qdrant db for text and images at the same time and combines them
+so gemini gets a good context window.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,16 +13,15 @@ from config import QDRANT_URL, QDRANT_API_KEY, QDRANT_COLLECTION_NAME, DEFAULT_T
 from schemas import RetrievalResult
 
 
-# Hyperparameters for score fusion.
-# Text provides primary narrative context; visual catches non-verbal data.
+# fusion weights. text is main context, visual is for slides
 TEXT_WEIGHT = 0.7
 VISUAL_WEIGHT = 0.3
 
 
 class VidExRetriever:
     """
-    Interface for executing vector database queries and fusing multimodal results.
-    Includes an optional mock mode for isolated testing.
+    handles searching vector db and mixing results.
+    has a mock mode for testing without real db.
     """
 
     def __init__(self, collection_name: str = QDRANT_COLLECTION_NAME, use_mock: bool = False):
@@ -38,7 +35,7 @@ class VidExRetriever:
             print("[Retrieval] Running in mock mode — no Qdrant connection.")
 
     def _build_filter(self, video_id: str | None) -> models.Filter | None:
-        """Generates a Qdrant filter to isolate searches to a specific video identifier."""
+        """make a filter to search only in the specific video id"""
         if video_id is None:
             return None
         return models.Filter(
@@ -47,7 +44,7 @@ class VidExRetriever:
 
     def _search_vector(self, vector_name: str, query_vector: list[float],
                        limit: int, video_id: str | None) -> list:
-        """Executes a similarity search against a targeted vector index."""
+        """run similarity search on vector index"""
         return self.client.search(
             collection_name=self.collection_name,
             query_vector=(vector_name, query_vector),
@@ -59,10 +56,9 @@ class VidExRetriever:
     def search_multimodal_context(self, user_query: str, limit: int = 3,
                                   video_id: str | None = None) -> list[dict]:
         """
-        Executes parallel searches across textual and visual vector spaces.
-        Results are deduplicated via timestamp clustering to prevent redundant 
-        context from consuming LLM token limits.
+        search text and image in parallel and deduplicate by timestamp so we don't waste tokens.
         """
+        # This is a mock testing until line 89, ignore it please
         if self.use_mock:
             print(f"[Retrieval] Mock search for: '{user_query[:50]}...'")
             return [
@@ -88,8 +84,8 @@ class VidExRetriever:
                 },
             ]
 
-        # Generate a unified embedding query. Both indices share the same vector space.
-        # Lazy-load the embedding manager to optimize application startup time.
+        # make one embedding vector for the question
+        # load the embedding manager to optimize application startup time.
         from modules.embeddings import embedding_manager
         
         t0 = time.perf_counter()
@@ -97,10 +93,10 @@ class VidExRetriever:
         t_embed = time.perf_counter() - t0
         print(f"[TIMING] SigLIP Embedding: {t_embed:.2f}s")
 
-        # Fetch extra candidates since timestamp fusion will deduplicate results
+        # get more results because we will remove duplicates later
         fetch_k = max(limit * 2, 6)
 
-        # Run both vector searches in parallel to halve network latency
+        # search both at same time so it's faster
         t1 = time.perf_counter()
         with ThreadPoolExecutor(max_workers=2) as pool:
             text_future = pool.submit(self._search_vector, "text_vector", query_vector, fetch_k, video_id)
@@ -110,10 +106,10 @@ class VidExRetriever:
         t_qdrant = time.perf_counter() - t1
         print(f"[TIMING] Parallel Qdrant Searches: {t_qdrant:.2f}s")
 
-        # --- Fusion time (Reciprocal Rank Fusion) ---
+        # RRF (Reciprocal Rank Fusion) 
         candidates = {} # timestamp -> payload
 
-        # 1. Process text hits (rank by chunk_index to avoid redundant frames flooding text ranks)
+        # 1. Process text hits (rank by chunk_index)
         text_ranks = {} # chunk_index -> (rank, score)
         t_rank = 0
         seen_chunks = set()
@@ -127,7 +123,7 @@ class VidExRetriever:
             if ts not in candidates:
                 candidates[ts] = hit.payload
 
-        # 2. Process visual hits (rank directly by timestamp)
+        # 2. process image results, rank by timestamp
         visual_ranks = {} # timestamp -> (rank, score)
         for rank, hit in enumerate(visual_hits):
             ts = hit.payload.get("timestamp", 0.0)
@@ -135,7 +131,7 @@ class VidExRetriever:
             if ts not in candidates:
                 candidates[ts] = hit.payload
 
-        # 3. Combine scores
+        # 3. combine text and image scores
         fused = []
         for ts, payload in candidates.items():
             c_idx = payload.get("chunk_index")
@@ -159,14 +155,14 @@ class VidExRetriever:
                 "chunk_index": c_idx,
                 "text_score": t_score,
                 "visual_score": v_score,
-                "combined_score": rrf # Use combined_score key to avoid changing downstream code
+                "combined_score": rrf # use combined_score so we don't break other code
             })
 
-        # 4. Deduplicate by chunk_index, keeping the timestamp with the highest RRF score
+        # 4. remove duplicates by chunk_index, keep highest score
         best_per_chunk = {}
         for entry in fused:
             c_idx = entry.get("chunk_index")
-            # If we already have a hit for this chunk, keep the one with the higher RRF score
+            # keep the one with higher score if we already have it
             if c_idx not in best_per_chunk or entry["combined_score"] > best_per_chunk[c_idx]["combined_score"]:
                 best_per_chunk[c_idx] = entry
 
@@ -175,13 +171,11 @@ class VidExRetriever:
 
 
 # --------------------------------------------------
-# Adapter: Connects the heavy lifting to app.py
+# Adapter: connector to app.py
 # --------------------------------------------------
 class RetrieverAdapter:
     """
-    Wraps the retriever so app.py can just call:
-        retriever.retrieve(query)
-    without worrying about the inner vector math.
+    wrapper so server can just call retriever.retrieve(query) easily.
     """
 
     def __init__(self):

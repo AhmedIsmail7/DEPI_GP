@@ -1,12 +1,5 @@
 """
-VidEx — Streamlit UI.
-
-Two tabs:
-  1. Ask VidEx — query an already-ingested video via dual-modality
-     retrieval + Gemini.
-  2. Add a video — upload a file directly (primary, reliable path) or
-     provide a Google Drive / YouTube URL (Drive reliable, YouTube
-     best-effort). Both paths run on Modal and poll for completion.
+Streamlit frontend app. Has tabs for chatting and uploading videos.
 """
 
 import time
@@ -26,7 +19,7 @@ POLL_TIMEOUT_SECONDS = 900  # 15 min ceiling, matches Modal function timeout
 
 st.set_page_config(page_title="VidEx", page_icon="🎓", layout="centered")
 
-# Inject CSS to automatically handle RTL text formatting (like Arabic)
+# add some css to make arabic text look right
 st.markdown("""
     <style>
     /* Make markdown text direction automatically adjust based on content (Arabic vs English) */
@@ -43,9 +36,7 @@ st.caption("Multimodal RAG assistant for educational video content")
 
 def poll_ingestion(call_id: str, status_placeholder) -> dict:
     """
-    Polls the Modal /status endpoint until the job completes, errors,
-    expires, or times out. Updates a Streamlit placeholder with elapsed
-    time so the user sees progress rather than a frozen spinner.
+    keep checking modal until video is done processing and show elapsed time.
     """
     start = time.time()
     while time.time() - start < POLL_TIMEOUT_SECONDS:
@@ -66,7 +57,7 @@ def poll_ingestion(call_id: str, status_placeholder) -> dict:
             return data
         elif data.get("status") == "expired":
             return data
-        # "running" — keep polling
+        # still running, keep waiting
 
         time.sleep(POLL_INTERVAL_SECONDS)
 
@@ -76,7 +67,7 @@ def poll_ingestion(call_id: str, status_placeholder) -> dict:
 tab_ask, tab_ingest = st.tabs(["Ask VidEx", "Add a video"])
 
 # ---------------------------------------------------------------------------
-# Tab 1: Ask VidEx
+# --- Tab 1: Ask VidEx ---
 # ---------------------------------------------------------------------------
 with tab_ask:
     st.subheader("Chat with your Video")
@@ -101,7 +92,7 @@ with tab_ask:
             st.session_state["vid_start_time"] = 0
 
         if len(selected_video_id) == 11 and not " " in selected_video_id:
-            # Most likely a YouTube video ID
+            # probably youtube link
             st.video(f"https://www.youtube.com/watch?v={selected_video_id}", start_time=st.session_state["vid_start_time"])
         elif os.path.exists(local_video_path):
             st.video(local_video_path, start_time=st.session_state["vid_start_time"])
@@ -110,7 +101,7 @@ with tab_ask:
 
         st.divider()
 
-        # Initialize session state for this video
+        # setup chat state
         session_key = f"messages_{selected_video_id}"
         summary_key = f"summary_{selected_video_id}"
         
@@ -122,7 +113,7 @@ with tab_ask:
         if summary_key not in st.session_state:
             st.session_state[summary_key] = ""
 
-        # Display chat history
+        # show old chat
         for idx, msg in enumerate(st.session_state[session_key]):
             with st.chat_message(msg["role"]):
                 st.markdown(f'<div dir="auto">{msg["content"]}</div>', unsafe_allow_html=True)
@@ -136,19 +127,19 @@ with tab_ask:
                                 st.session_state["vid_start_time"] = int(ts)
                                 st.rerun()
 
-        # Optional screenshot uploader
+        # user can upload screenshot here
         with st.expander("📸 Provide a screenshot of the current frame (optional)"):
             st.caption("Stuck on an equation? Take a screenshot of the video and drop it here so I can see it!")
             frame_upload = st.file_uploader("Upload Frame", type=["png", "jpg", "jpeg"], label_visibility="collapsed")
 
-        # Chat input
+        # chat box
         if query := st.chat_input("Ask a question about the video..."):
             # Render user message instantly
             st.session_state[session_key].append({"role": "user", "content": query})
             with st.chat_message("user"):
                 st.markdown(query)
 
-            # Handle uploaded frame
+            # deal with screenshot if user added one
             frame_path = None
             if frame_upload:
                 import tempfile
@@ -172,7 +163,7 @@ with tab_ask:
                             results, 
                             video_id=selected_video_id, 
                             current_frame_path=frame_path,
-                            # Exclude the very last message which is the current query we just appended
+                            # don't include the current question in history
                             chat_history=st.session_state[session_key][:-1],
                             rolling_summary=st.session_state[summary_key]
                         )
@@ -180,10 +171,10 @@ with tab_ask:
                     if getattr(answer, "new_summary", None):
                         st.session_state[summary_key] = answer.new_summary
 
-                    # Build Markdown response 
+                    # show answer 
                     st.markdown(f'<div dir="auto">\n\n{answer.answer}\n\n</div>', unsafe_allow_html=True)
                     
-                    # Store message with sources for history
+                    # save to history
                     sources_list = sorted(set(answer.source_timestamps)) if answer.source_timestamps else []
                     st.session_state[session_key].append({
                         "role": "assistant", 
@@ -191,25 +182,25 @@ with tab_ask:
                         "sources": sources_list
                     })
 
-                    # Interactive Sources for the current message
+                    # clickable source buttons
                     if sources_list:
                         st.markdown("<br><b>Sources (Click to jump in video):</b>", unsafe_allow_html=True)
                         cols = st.columns(len(sources_list) * 2) 
                         for idx, ts in enumerate(sources_list):
                             minutes, seconds = divmod(int(ts), 60)
                             with cols[idx]:
-                                # We must use the exact same key as the history loop to ensure clicks register perfectly
+                                # use same key so clicking works
                                 hist_idx = len(st.session_state[session_key]) - 1
                                 if st.button(f"⏱️ {minutes}:{seconds:02d}", key=f"hist_btn_{selected_video_id}_{hist_idx}_{ts}"):
                                     st.session_state["vid_start_time"] = int(ts)
                                     st.rerun()
 
-            # Clean up the temporary file
+            # delete temp file
             if frame_path and os.path.exists(frame_path):
                 os.remove(frame_path)
 
 # ---------------------------------------------------------------------------
-# Tab 2: Add a video
+# --- Tab 2: Add a video ---
 # ---------------------------------------------------------------------------
 with tab_ingest:
     st.subheader("Add a video")
@@ -217,7 +208,7 @@ with tab_ingest:
     upload_subtab, url_subtab = st.tabs(["Upload File (recommended)", "Video URL"])
 
     with upload_subtab:
-        st.caption("Most reliable — works regardless of platform restrictions.")
+        st.caption("this one is the most reliable.")
         uploaded_file = st.file_uploader("Video file", type=["mp4", "mov", "mkv"])
 
         if st.button("Ingest uploaded file", disabled=not uploaded_file, key="upload_btn"):
@@ -254,9 +245,7 @@ with tab_ingest:
 
     with url_subtab:
         st.caption(
-            "Google Drive links work reliably. YouTube links are best-effort — "
-            "some videos may fail due to region locks, membership restrictions, "
-            "or platform bot-detection outside our control."
+            "drive links are good. youtube might fail sometimes because of bots."
         )
         video_url = st.text_input("Google Drive or YouTube URL")
 

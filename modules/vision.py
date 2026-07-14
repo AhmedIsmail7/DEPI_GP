@@ -1,12 +1,6 @@
 """
-Vision module — samples candidate frames per transcript chunk, filters out
-low-quality candidates (black/blank frames, blurry frames, near-duplicates
-of the previously selected keyframe), then picks the one most semantically
-aligned with the chunk's text via SigLIP cosine similarity.
-
-Quality filtering + duplicate detection: rejecting bad candidates before
-scoring means the "best" frame is actually good, not just the best of a
-bad set.
+grabs frames from video, throws out bad ones (black/blurry/duplicate), 
+and gets the best frame for each chunk using siglip.
 """
 
 import os
@@ -29,10 +23,10 @@ class SemanticVisionProcessor:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # ---- Frame quality helpers ----
+    # ---- frame helpers ----
 
     def _calculate_phash(self, frame: np.ndarray) -> str:
-        """64-bit perceptual hash via DCT — used to detect near-duplicate frames."""
+        """hash frame to find duplicates"""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         resized = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA)
         dct = cv2.dct(np.float32(resized))
@@ -50,7 +44,7 @@ class SemanticVisionProcessor:
         return 1.0 - (hamming / len(hash1))
 
     def _passes_quality_filter(self, frame: np.ndarray, previous_hash: str | None) -> tuple[bool, str | None, str | None]:
-        """Returns (passes, phash, rejection_reason)."""
+        """check if frame is good. returns true/false and reason."""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         brightness = float(np.mean(gray))
@@ -70,9 +64,7 @@ class SemanticVisionProcessor:
         return True, current_hash, None
 
     def get_raw_frame_at_time(self, cap, timestamp_sec):
-        """Returns the raw BGR frame (np.ndarray) — quality filtering needs
-        the raw array; PIL conversion happens only for frames that survive
-        filtering, right before embedding."""
+        """get the raw frame from opencv"""
         cap.set(cv2.CAP_PROP_POS_MSEC, timestamp_sec * 1000)
         ret, frame = cap.read()
         return frame if ret else None
@@ -80,10 +72,9 @@ class SemanticVisionProcessor:
     def process_video_blocks(
         self, video_path: str, video_id: str, transcript_chunks: list[TranscriptChunk],
     ) -> list[VisualChunk]:
-        """Iterates over transcript chunks, extracts candidate frames per
-        chunk window (filtering out black/blurry/duplicate ones), and picks
-        the one most semantically aligned with the chunk's text via SigLIP
-        similarity."""
+        """
+        loop over transcript chunks and get the best frame for each
+        """
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
@@ -104,15 +95,13 @@ class SemanticVisionProcessor:
                 passes, phash, rejection_reason = self._passes_quality_filter(frame, previous_keyframe_hash)
                 if passes:
                     candidates.append((frame, ts, phash))
-                    # Crucially: update the hash immediately so the NEXT frame is compared against THIS frame,
-                    # not the frame from the previous chunk. This allows multiple distinct frames per chunk!
+                    # update hash so we compare with the last frame, allows multiple frames per chunk
                     previous_keyframe_hash = phash
                 else:
                     # 2. Print it so Modal catches it in the background logs stream
                     print(f"   [Quality Filter] Frame at {round(ts, 2)}s rejected: {rejection_reason}")
 
-            # Fallback: if quality filtering rejected everything, use the first available raw sample
-            # so we don't completely lose visual context for this chunk.
+            # if all frames are bad, just use the first one so we don't have nothing
             if not candidates:
                 for ts in timestamps:
                     frame = self.get_raw_frame_at_time(cap, ts)
@@ -129,7 +118,7 @@ class SemanticVisionProcessor:
                 [embedding_manager.get_image_embedding(f) for f in frames_pil]
             )
 
-            # Keep ALL high-quality candidate frames
+            # keep all good frames
             for i in range(len(candidates)):
                 frame, ts, phash = candidates[i]
                 results.append(VisualChunk(
@@ -137,7 +126,7 @@ class SemanticVisionProcessor:
                     chunk_index=chunk.index,
                     timestamp=round(float(ts), 2),
                     embedding=image_features[i].cpu().numpy().tolist(),
-                    similarity_score=1.0,  # Legacy field, we no longer compute text alignment score here
+                    similarity_score=1.0,  # we don't use this score anymore
                 ))
 
             print(f"Chunk {chunk.index}: kept {len(candidates)} distinct frame(s) out of {FRAME_SAMPLE_COUNT}")

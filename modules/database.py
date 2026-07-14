@@ -1,8 +1,6 @@
 """
-Qdrant Vector Database Interface.
-
-Manages collection initialization, embedding dimension validation, and 
-implements robust upsert mechanisms with exponential backoff and retry logic.
+db stuff for qdrant. 
+creates collections and uploads vectors with retries.
 """
 
 import time
@@ -20,7 +18,7 @@ from schemas import TranscriptChunk, VisualChunk, QdrantPoint, TEXT_EMBEDDING_DI
 
 @dataclass
 class IndexingResult:
-    """Summarizes the outcome of a vector indexing operation."""
+    """results of the upload"""
     points_attempted: int = 0
     points_uploaded: int = 0
     skipped_no_visual_match: int = 0
@@ -34,8 +32,7 @@ class IndexingResult:
 
 class DimensionMismatchError(Exception):
     """
-    Raised when payload embedding dimensions do not match the expected vector size
-    configured in the target Qdrant collection.
+    error if the vector size is wrong
     """
     pass
 
@@ -67,8 +64,7 @@ class QdrantManager:
 
     def _validate_dimensions(self):
         """
-        Validates that the existing collection configuration matches the current 
-        model embedding dimensions to prevent payload rejection during upsert.
+        check if the db has the right vector size before uploading
         """
         info = self.client.get_collection(self.collection_name)
         vectors_config = info.config.params.vectors
@@ -88,7 +84,7 @@ class QdrantManager:
             )
 
     def _upsert_with_retry(self, points: list[models.PointStruct]) -> int:
-        """Executes a database upsert operation with exponential backoff retries."""
+        """upload to qdrant and retry if it fails"""
         retries_used = 0
         for attempt in range(UPSERT_MAX_RETRIES):
             try:
@@ -105,7 +101,7 @@ class QdrantManager:
         return retries_used  # unreachable, but keeps type-checkers happy
 
     def upsert_data(self, transcript_chunks: list[TranscriptChunk], visual_chunks: list[VisualChunk]) -> IndexingResult:
-        """Combines the text and visual chunks into points and ships them to Qdrant."""
+        """combine text and images and upload to qdrant"""
         from collections import defaultdict
         visual_by_index = defaultdict(list)
         for v in visual_chunks:
@@ -156,7 +152,7 @@ class QdrantManager:
         return result
 
     def get_available_video_ids(self) -> list[str]:
-        """Grabs all the unique video IDs we have stored so we can show them in the dropdown."""
+        """get all video ids so we can show them in the dropdown"""
         ids = set()
         next_offset = None
         while True:

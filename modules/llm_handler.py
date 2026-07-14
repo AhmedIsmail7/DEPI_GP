@@ -1,15 +1,11 @@
 """
-LLM Integration and Generation Engine.
-
-Constructs multimodal prompts utilizing retrieved video context and 
-interfaces with the Gemini API to generate contextual answers.
-Supports text queries, visual context analysis, and chat history rolling summarization.
+this file handles all the ai and llm stuff.
+it talks to gemini api, builds the prompts with the video text/images,
+and summarizes the chat history so we don't go over token limits.
 """
 
 import os
 import hashlib
-import functools
-
 from google import genai
 from google.genai import types
 from PIL import Image
@@ -19,7 +15,7 @@ from config import GEMINI_API_KEY, GEMINI_MODEL, CHAT_HISTORY_TOKEN_LIMIT
 from schemas import RetrievalResult, LLMAnswer
 
 
-# In-memory LRU cache to reduce latency and API consumption for identical queries.
+# simple cache in memory so we don't call api for same question twice
 CACHE_MAXSIZE = 128
 
 
@@ -45,7 +41,7 @@ SYSTEM_PROMPT = (
 
 class VidExGenerator:
     """
-    Manages prompt construction, Gemini API execution, and transient failure retries.
+    main class for gemini stuff. handles prompts and retries if api fails.
     """
 
     def __init__(self):
@@ -56,14 +52,14 @@ class VidExGenerator:
         self.client = genai.Client(api_key=GEMINI_API_KEY)
         self.model_id = GEMINI_MODEL
 
-        # Initialize response cache for identical contextual queries
+        # setup cache for same questions
         self._cache: dict[str, str] = {}
         self._cache_order: list[str] = []
 
         print(f"[LLM] Gemini handler ready — model: {self.model_id}")
 
     def _make_cache_key(self, query: str, contexts: list, frame_path: str | None, chat_history: list[dict] | None = None, rolling_summary: str = "") -> str:
-        """Generates a unique SHA-256 hash identifying the query and its full context."""
+        """make a unique hash for the question and its context so we can cache it"""
         raw = query + "||"
         for item in contexts:
             text = getattr(item, "text", str(item))
@@ -74,7 +70,7 @@ class VidExGenerator:
         if rolling_summary:
             raw += f"Summary:{rolling_summary}||"
         if chat_history:
-            # We don't hash all history, just what is passed in (which is token-capped)
+            # We don't hash all history, just what is passed in
             for msg in chat_history:
                 if isinstance(msg, dict):
                     raw += f"{msg.get('role', '')}:{msg.get('content', '')}||"
@@ -83,7 +79,7 @@ class VidExGenerator:
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def _estimate_tokens(self, text: str) -> int:
-        """Rough estimation: 1 token ≈ 4 characters."""
+        """guess tokens: 1 token is like 4 chars roughly"""
         return len(text) // 4
 
     def _cache_get(self, key: str) -> str | None:
@@ -94,7 +90,7 @@ class VidExGenerator:
             self._cache_order.remove(key)
         self._cache[key] = value
         self._cache_order.append(key)
-        # Evict the oldest entry to maintain max size
+        # remove oldest item if cache is full
         if len(self._cache_order) > CACHE_MAXSIZE:
             oldest = self._cache_order.pop(0)
             del self._cache[oldest]
@@ -105,7 +101,7 @@ class VidExGenerator:
         reraise=True,
     )
     def _call_gemini(self, contents: list, system_instruction: str, model_id: str | None = None) -> str:
-        """Executes the generate_content API call with exponential backoff."""
+        """call gemini api, and retry automatically if it fails"""
         target_model = model_id if model_id else self.model_id
         response = self.client.models.generate_content(
             model=target_model,
@@ -122,17 +118,17 @@ class VidExGenerator:
                         chat_history: list[dict] | None = None,
                         rolling_summary: str = "") -> tuple[str, str | None]:
         """
-        Constructs a multimodal prompt utilizing retrieved contexts and current user state.
-        Returns a tuple of (generated_answer, updated_rolling_summary).
+        mixes video text, chat history and current frame to get an answer.
+        returns the answer and the new summary.
         """
-        # 1. Budgeting Logic
+        # 1. Budget Logic since we are poor :()
         recent_history = []
         overflow_history = []
         
         if chat_history:
             budget = CHAT_HISTORY_TOKEN_LIMIT
-            # Walk backwards through Q/A pairs (assuming length is even, or just stepping backwards)
-            # We add messages in pairs if possible to maintain context
+            # go back in history to count tokens
+            # add msg pairs to keep context logic
             i = len(chat_history) - 1
             while i >= 0:
                 msg = chat_history[i]
@@ -147,13 +143,11 @@ class VidExGenerator:
                 else:
                     break
             
-            # Any messages that didn't fit are overflow
+            # whatever didn't fit goes to overflow
             if i >= 0:
                 overflow_history = chat_history[:i+1]
                 
-        # 2. Rolling Summarization (Synchronous Blocking Call)
-        # Note: This executes synchronously on the critical path, adding latency. 
-        # However, it only fires intermittently when the token budget overflows.
+        # 2. summarize old history if too long, runs blocking but only when overflow
         new_summary = None
         if overflow_history:
             print(f"[LLM] History exceeded budget. Summarizing {len(overflow_history)} overflow messages...")
@@ -172,10 +166,10 @@ class VidExGenerator:
             )
             
             try:
-                # Use flash-lite explicitly for summarization (fastest/cheapest tier)
+                # use flash-lite for summary because its cheap and fast
                 raw_new_summary = self._call_gemini([summary_prompt], "Maintain the rolling summary.", model_id="gemini-3.1-flash-lite")
                 
-                # Hard truncate backstop in case the model ignores the prompt length instruction (approx 150 tokens = 600 chars)
+                # hard cut if model talks too much just in case
                 if len(raw_new_summary) > 600:
                     raw_new_summary = raw_new_summary[:597] + "..."
                     
@@ -183,20 +177,17 @@ class VidExGenerator:
                 rolling_summary = new_summary
             except Exception as e:
                 print(f"[LLM] Warning: Summarization failed ({e}). Keeping existing summary.")
-                # Fallback: keep previous summary, don't break the user's answer
+                # if fail just keep old summary so app doesn't crash
                 new_summary = rolling_summary
 
-        # Check cache first (using the updated rolling summary and token-capped recent history)
-        # Note: The cache is global per VidExGenerator instance. 
-        # If chat_history is empty, rolling_summary is empty, so standalone questions bypass the summary
-        # completely and hit the cache reliably across all users/sessions.
+        # check cache first using the summary and recent history
         cache_key = self._make_cache_key(user_query, contexts, current_frame_path, recent_history, rolling_summary)
         cached = self._cache_get(cache_key)
         if cached is not None:
             print("[LLM] Cache hit — skipping API call.")
             return cached, new_summary
 
-        # Build the text context block from retrieved chunks
+        # put text context together from chunks
         context_block = ""
         for idx, item in enumerate(contexts, start=1):
             text = getattr(item, "text", "No transcript available.")
@@ -204,7 +195,7 @@ class VidExGenerator:
             minutes, seconds = divmod(int(timestamp), 60)
             context_block += f"[{idx}] Timestamp {minutes}:{seconds:02d}: {text}\n"
 
-        # Build history context block
+        # put history text together
         history_text = ""
         if rolling_summary:
             history_text += f"Previous Conversation Summary:\n{rolling_summary}\n\n"
@@ -217,11 +208,10 @@ class VidExGenerator:
 
         prompt_text = f"{history_text}Student Question: {user_query}\n\nVideo Transcripts:\n{context_block}"
 
-        # Assemble the multimodal content array
+        # mix text and images together for api
         api_contents = [prompt_text]
 
-        # Scenario A: user uploaded a screenshot
-        # (e.g., "solve the equation that's on screen right now")
+        # Case A: user paused and sent a screenshot (like "explain this")
         if current_frame_path and os.path.exists(current_frame_path):
             try:
                 frame_img = Image.open(current_frame_path)
@@ -233,7 +223,7 @@ class VidExGenerator:
             except Exception as e:
                 print(f"[LLM] Couldn't load current frame ({current_frame_path}): {e}")
 
-        # Scenario B: throw in any slide frames we got from the DB
+        # Case B: add slide images from DB if available
         for i, item in enumerate(contexts, start=1):
             img_path = getattr(item, "image_path", None)
             if img_path and os.path.exists(img_path):
@@ -241,7 +231,7 @@ class VidExGenerator:
                     api_contents.append(f"Retrieved slide for context [{i}]:")
                     api_contents.append(Image.open(img_path))
                 except Exception:
-                    # if the image is missing or broken, just ignore it and keep going
+                    # if image is broken just skip it
                     continue
 
         answer_text = self._call_gemini(api_contents, SYSTEM_PROMPT)
@@ -250,12 +240,11 @@ class VidExGenerator:
 
 
 # -----------------------------------------------
-# Adapter: Hook it up to app.py
+# Adapter: connector to app.py
 # -----------------------------------------------
 class LLMAdapter:
     """
-    Wraps the generator so app.py can just call `generate_response` 
-    and get back exactly what the frontend expects.
+    wrapper so app.py doesn't have to deal with the messy generator logic directly.
     """
 
     def __init__(self):
@@ -274,7 +263,7 @@ class LLMAdapter:
             rolling_summary=rolling_summary
         )
 
-        # Pull the timestamps out so we can display them nicely in the UI
+        # get timestamps to show in frontend ui
         timestamps = []
         for chunk in context_chunks:
             ts = getattr(chunk, "timestamp", None)
@@ -289,5 +278,5 @@ class LLMAdapter:
         )
 
 
-# Singleton — this is what app.py imports
+# this is what app.py imports
 llm_handler = LLMAdapter()

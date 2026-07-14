@@ -1,7 +1,6 @@
 """
-Shared data contracts for VidEx.
-Everyone import from here instead of passing around raw dicts. 
-This is how we avoid annoying bugs where someone forgets a video_id field.
+shared data structures. 
+everyone use this so we don't forget fields like video_id.
 """
 
 from pydantic import BaseModel, field_validator

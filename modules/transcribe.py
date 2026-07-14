@@ -14,9 +14,7 @@ from schemas import TranscriptChunk
 
 def compute_chunk_boundaries(total_ms: int, chunk_ms: int, overlap_ms: int) -> list[tuple[int, int]]:
     """
-    Pure sliding-window math, extracted from process_audio_with_overlap
-    so it's testable without loading audio or running Whisper.
-    Returns a list of (start_ms, end_ms) tuples.
+    calculate start and end times for chunks
     """
     step_ms = chunk_ms - overlap_ms
     return [(start, start + chunk_ms) for start in range(0, total_ms, step_ms)]
@@ -30,8 +28,7 @@ class Transcriber:
 
     @property
     def model(self):
-        """Lazy-loaded: keeps this class importable on a laptop without
-        pulling in Whisper weights until actually needed."""
+        """only load whisper when we need it so it doesn't use memory"""
         if self._model is None:
             print(f"Loading Whisper model '{self.model_size}' on {self.device}...")
             self._model = whisper.load_model(self.model_size, device=self.device)
